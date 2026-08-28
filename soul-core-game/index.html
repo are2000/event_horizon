@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Soul Core: The Great Decay</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "phaser": "https://cdn.jsdelivr.net/npm/phaser@3.80.1/+esm"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="game-container">
+        <div id="orientation-warning">
+            <div class="warning-content">
+                <h2>يرجى تدوير الجهاز</h2>
+                <p>اللعبة مصممة للوضع العمودي Portrait</p>
+                <h2>Please rotate device</h2>
+                <p>Game designed for Portrait mode</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading screen -->
+    <div id="loading-screen">
+        <div class="loading-core">
+            <div class="core-glow"></div>
+            <div class="core-inner"></div>
+        </div>
+        <h1 class="loading-title">SOUL CORE</h1>
+        <p class="loading-subtitle">THE GREAT DECAY</p>
+        <div class="loading-bar">
+            <div class="loading-progress" id="loading-progress"></div>
+        </div>
+        <p class="loading-text" id="loading-text">تحميل النواة...</p>
+    </div>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
