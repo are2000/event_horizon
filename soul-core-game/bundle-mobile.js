@@ -1,9 +1,22 @@
-// Soul Core Bundle - No Assets, Mobile Reliable
+// Soul Core Bundle Fixed - Mobile Reliable, Auto-hide loading
 const Phaser = window.Phaser;
 if (!Phaser) throw new Error('Phaser not loaded');
-console.log('Soul Core NoAssets Bundle, Phaser', Phaser.VERSION);
 
-// --- soul-core-game/src/config.js ---
+function hideLoadingScreen() {
+    try {
+        const ls = document.getElementById('loading-screen');
+        const bar = document.getElementById('loading-progress');
+        if (bar) bar.style.width = '100%';
+        if (ls) {
+            ls.classList.add('hidden');
+            setTimeout(() => { ls.style.display = 'none'; }, 500);
+            console.log('hideLoadingScreen called');
+        }
+    } catch(e) { console.warn('hideLoading failed', e); }
+}
+
+
+// --- config.js ---
 
 const GAME_CONFIG = {
     width: 720,
@@ -97,7 +110,7 @@ const SECTOR_TYPES = {
 };
 
 
-// --- soul-core-game/src/data/localization.js ---
+// --- localization.js ---
 
 const L10N = {
     en: {
@@ -232,7 +245,7 @@ function getSectorName(sectorId) {
 }
 
 
-// --- soul-core-game/src/data/equipment.js ---
+// --- equipment.js ---
 
 // Equipment data model per design doc section 21
 const EQUIPMENT_DB = {
@@ -480,7 +493,7 @@ function rollLoot(tableName) {
 }
 
 
-// --- soul-core-game/src/data/ships.js ---
+// --- ships.js ---
 
 const ENEMY_DB = {
     [ENEMY_TYPES.FIGHTER]: {
@@ -579,7 +592,7 @@ const BOSS_DB = {
 };
 
 
-// --- soul-core-game/src/systems/save-system.js ---
+// --- save-system.js ---
 
 class SaveSystem {
     constructor() {
@@ -655,7 +668,7 @@ class SaveSystem {
 }
 
 
-// --- soul-core-game/src/systems/audio-system.js ---
+// --- audio-system.js ---
 
 class AudioSystem {
     constructor(scene) {
@@ -759,7 +772,7 @@ class AudioSystem {
 }
 
 
-// --- soul-core-game/src/systems/ship-system.js ---
+// --- ship-system.js ---
 
 class ShipSystem {
     constructor(scene, x, y) {
@@ -978,7 +991,7 @@ class ShipSystem {
 }
 
 
-// --- soul-core-game/src/systems/inventory-system.js ---
+// --- inventory-system.js ---
 
 class InventorySystem {
     constructor(width = 5, height = 6) {
@@ -1145,7 +1158,7 @@ class InventorySystem {
 }
 
 
-// --- soul-core-game/src/systems/weapon-system.js ---
+// --- weapon-system.js ---
 
 class WeaponMount {
     constructor(scene, mountPosition, offsetX, offsetY) {
@@ -1537,7 +1550,7 @@ class ProjectileSystem {
 }
 
 
-// --- soul-core-game/src/systems/targeting-system.js ---
+// --- targeting-system.js ---
 
 class TargetingSystem {
     constructor(scene) {
@@ -1661,7 +1674,7 @@ class TargetingSystem {
 }
 
 
-// --- soul-core-game/src/systems/corrosion-system.js ---
+// --- corrosion-system.js ---
 
 class CorrosionSystem {
     constructor(shipSystem) {
@@ -1716,7 +1729,7 @@ class CorrosionSystem {
 }
 
 
-// --- soul-core-game/src/systems/enemy-ai.js ---
+// --- enemy-ai.js ---
 
 class EnemyAI {
     constructor(scene, x, y, type) {
@@ -2003,7 +2016,7 @@ class EnemyAI {
 }
 
 
-// --- soul-core-game/src/systems/sector-system.js ---
+// --- sector-system.js ---
 
 class SectorSystem {
     constructor(scene, sectorId = 1) {
@@ -2408,7 +2421,25 @@ class SectorSystem {
 }
 
 
-// --- /tmp/PreloadSceneNoAssets.js ---
+
+// --- BootScene.js (fixed) ---
+class BootScene extends Phaser.Scene {
+    constructor() { super('BootScene'); }
+    preload() {}
+    create() {
+        console.log('BootScene create - hiding loading screen');
+        hideLoadingScreen();
+        try {
+            const savedLang = localStorage.getItem('soul_core_lang');
+            const browserLang = (typeof navigator !== 'undefined' && navigator.language && navigator.language.startsWith('ar')) ? 'ar' : 'en';
+            if (typeof setLanguage !== 'undefined') { setLanguage(savedLang || browserLang); }
+        } catch(e){}
+        this.scene.start('PreloadScene');
+    }
+}
+
+
+// --- PreloadScene.js (no assets) ---
 
 
 
@@ -2493,57 +2524,21 @@ class PreloadScene extends Phaser.Scene {
 
     create() {
         console.log('Preload complete (no external assets)');
+        try { hideLoadingScreen(); } catch(e){}
         this.scene.start('MainMenuScene');
     }
 }
 
 
-// --- soul-core-game/src/scenes/BootScene.js ---
-
-class BootScene extends Phaser.Scene {
-    constructor() {
-        super('BootScene');
-    }
-
-    preload() {
-        // Minimal preload for boot
-    }
-
-    create() {
-        // Setup language from save or browser
-        const savedLang = localStorage.getItem('soul_core_lang');
-        if (savedLang) {
-            setLanguage(savedLang);
-        } else {
-            const browserLang = navigator.language.startsWith('ar') ? 'ar' : 'en';
-            setLanguage(browserLang);
-        }
-
-        // Hide HTML loading screen
-        const loadingScreen = document.getElementById('loading-screen');
-        if (loadingScreen) {
-            loadingScreen.classList.add('hidden');
-            setTimeout(() => loadingScreen.style.display = 'none', 800);
-        }
-
-        // Device detection
-        this.isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
-
-        console.log('Soul Core Boot - Lang:', currentLang, 'Mobile:', this.isMobile);
-
-        this.scene.start('PreloadScene');
-    }
-}
-
-
-// --- soul-core-game/src/scenes/MainMenuScene.js ---
+// --- MainMenuScene.js ---
 
 class MainMenuScene extends Phaser.Scene {
     constructor() {
         super('MainMenuScene');
     }
 
-    create() {
+    create() { try { hideLoadingScreen(); } catch(e){}
+
         const { width, height } = this.cameras.main;
         this.saveSystem = new SaveSystem();
         const saveData = this.saveSystem.load();
@@ -2774,7 +2769,7 @@ class MainMenuScene extends Phaser.Scene {
 }
 
 
-// --- soul-core-game/src/scenes/GameScene.js ---
+// --- GameScene.js ---
 
 class GameScene extends Phaser.Scene {
     constructor() {
@@ -2786,7 +2781,8 @@ class GameScene extends Phaser.Scene {
         this.isContinue = data.isContinue || false;
     }
 
-    create() {
+    create() { try { hideLoadingScreen(); } catch(e){}
+
         console.log(`GameScene Sector ${this.sectorId} Continue:${this.isContinue}`);
         
         // Systems
@@ -3913,7 +3909,7 @@ class GameScene extends Phaser.Scene {
 }
 
 
-// --- soul-core-game/src/scenes/InventoryScene.js ---
+// --- InventoryScene.js ---
 
 class InventoryScene extends Phaser.Scene {
     constructor() {
@@ -4389,7 +4385,7 @@ class InventoryScene extends Phaser.Scene {
 }
 
 
-// --- soul-core-game/src/scenes/RepairScene.js ---
+// --- RepairScene.js ---
 
 class RepairScene extends Phaser.Scene {
     constructor() {
@@ -4535,7 +4531,7 @@ class RepairScene extends Phaser.Scene {
 }
 
 
-// --- soul-core-game/src/scenes/GameOverScene.js ---
+// --- GameOverScene.js ---
 
 class GameOverScene extends Phaser.Scene {
     constructor() {
@@ -4658,7 +4654,7 @@ class GameOverScene extends Phaser.Scene {
 }
 
 
-// --- soul-core-game/src/scenes/VictoryScene.js ---
+// --- VictoryScene.js ---
 
 class VictoryScene extends Phaser.Scene {
     constructor() {
@@ -4768,7 +4764,7 @@ class VictoryScene extends Phaser.Scene {
 }
 
 
-// --- soul-core-game/src/scenes/BossScene.js ---
+// --- BossScene.js ---
 
 
 // BossScene is a specialized GameScene for sector 5
@@ -4798,6 +4794,8 @@ class BossScene extends GameScene {
 }
 
 
+
+// --- Main Game Start ---
 const gameConfig = {
     type: Phaser.AUTO,
     width: GAME_CONFIG.width,
@@ -4820,18 +4818,18 @@ const gameConfig = {
     render: { antialias: true, pixelArt: false, roundPixels: false }
 };
 
-window.addEventListener('load', () => {
+function startGame() {
+    console.log('Starting Phaser Game');
     const game = new Phaser.Game(gameConfig);
-    window.addEventListener('resize', () => { if (game.scale) game.scale.refresh(); });
-    document.addEventListener('contextmenu', e => e.preventDefault());
-    document.addEventListener('touchmove', e => { if (e.target.closest('#game-container')) e.preventDefault(); }, { passive: false });
-    console.log('Soul Core NoAssets - Game initialized');
-    setTimeout(() => {
-        const ls = document.getElementById('loading-screen');
-        if (ls) { ls.classList.add('hidden'); setTimeout(() => ls.style.display = 'none', 800); }
-    }, 800);
-});
+    setTimeout(() => { hideLoadingScreen(); }, 500);
+    return game;
+}
 
 if (document.readyState === 'complete') {
-    const game = new Phaser.Game(gameConfig);
+    startGame();
+} else {
+    window.addEventListener('load', () => { startGame(); });
 }
+
+// Fallback: hide loading after 2 sec even if game fails to start, to show error or canvas
+setTimeout(() => { hideLoadingScreen(); }, 2500);

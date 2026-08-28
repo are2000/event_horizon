@@ -6,39 +6,106 @@
     <title>Soul Core: The Great Decay</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
-    <script>
-        // Fallback CDN
-        if (typeof Phaser === 'undefined') {
-            document.write('<script src="https://unpkg.com/phaser@3.80.1/dist/phaser.min.js"><\/script>');
-        }
-    </script>
 </head>
 <body>
     <div id="game-container"></div>
+    
     <div id="loading-screen">
         <div class="loading-core"><div class="core-glow"></div><div class="core-inner"></div></div>
         <h1 class="loading-title">SOUL CORE</h1>
         <p class="loading-subtitle">THE GREAT DECAY</p>
         <div class="loading-bar"><div class="loading-progress" id="loading-progress" style="width:0%"></div></div>
-        <p class="loading-text" id="loading-text">تحميل النواة... جاري التحميل بدون أصول خارجية لضمان عمل الموبايل</p>
-        <p style="color:#00ff88; font-size:10px; margin-top:10px;">نسخة موبايل خفيفة - بدون تحميل صور خارجية</p>
+        <p class="loading-text" id="loading-text">تحميل النواة...</p>
+        <p id="loading-debug" style="color:#00ff88; font-size:10px; margin-top:10px;"></p>
+        <button id="skip-loading" style="margin-top:20px; padding:10px 20px; background:#00ffff; color:#000; border:none; border-radius:5px; font-weight:bold; display:none;">تخطي / Skip → ابدأ اللعب</button>
     </div>
+
     <script>
-        // Progress simulation
-        let prog = 0;
-        const bar = document.getElementById('loading-progress');
-        const txt = document.getElementById('loading-text');
-        const iv = setInterval(() => {
-            prog += Math.random()*20;
-            if (prog > 90) prog = 90;
-            bar.style.width = prog + '%';
-        }, 300);
-        window.addEventListener('load', () => {
-            clearInterval(iv);
-            bar.style.width = '100%';
+        // Auto-hide loading screen after max 4 seconds even if game fails - show skip button
+        const loadingScreen = document.getElementById('loading-screen');
+        const progressBar = document.getElementById('loading-progress');
+        const loadingText = document.getElementById('loading-text');
+        const debugText = document.getElementById('loading-debug');
+        const skipBtn = document.getElementById('skip-loading');
+        
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+            progress += Math.random() * 15 + 5;
+            if (progress > 85) progress = 85;
+            progressBar.style.width = progress + '%';
+            loadingText.textContent = 'تحميل النواة... ' + Math.floor(progress) + '%';
+        }, 400);
+
+        // Debug Phaser load
+        setTimeout(() => {
+            if (typeof Phaser === 'undefined') {
+                debugText.textContent = '❌ Phaser لم يتحمل - تحقق من النت';
+                debugText.style.color = '#ff4444';
+            } else {
+                debugText.textContent = '✓ Phaser ' + Phaser.VERSION + ' loaded - بدء اللعبة...';
+                progressBar.style.width = '95%';
+            }
+        }, 800);
+
+        // Show skip button after 3 sec
+        setTimeout(() => {
+            skipBtn.style.display = 'block';
+            loadingText.textContent = 'تحميل بطيء؟ دوس تخطي';
+            debugText.textContent += ' | لو واقف دوس تخطي';
+        }, 3000);
+
+        // Auto-hide after 5 sec max
+        setTimeout(() => {
+            clearInterval(progressInterval);
+            if (loadingScreen && loadingScreen.style.display !== 'none') {
+                progressBar.style.width = '100%';
+                loadingText.textContent = 'جاهز! إخفاء شاشة التحميل...';
+                setTimeout(() => {
+                    loadingScreen.classList.add('hidden');
+                    setTimeout(() => {
+                        loadingScreen.style.display = 'none';
+                        console.log('Loading screen auto-hidden after timeout');
+                    }, 800);
+                }, 500);
+            }
+        }, 5000);
+
+        skipBtn.addEventListener('click', () => {
+            clearInterval(progressInterval);
+            loadingScreen.classList.add('hidden');
+            setTimeout(() => loadingScreen.style.display = 'none', 300);
+        });
+
+        window.addEventListener('error', (e) => {
+            debugText.textContent = 'خطأ: ' + e.message;
+            debugText.style.color = '#ff4444';
+            skipBtn.style.display = 'block';
         });
     </script>
-    <!-- Mobile reliable bundle - no external asset loading, pure procedural -->
+
+    <!-- Bundled game - no external assets -->
     <script src="bundle-mobile.js"></script>
+    
+    <script>
+        // Extra safety: hide loading screen when Phaser game starts
+        // This will be called from bundle.js too, but we add extra listener
+        setTimeout(() => {
+            const checkGame = setInterval(() => {
+                const canvas = document.querySelector('#game-container canvas');
+                if (canvas) {
+                    console.log('Game canvas found, hiding loading screen');
+                    clearInterval(checkGame);
+                    clearInterval(progressInterval);
+                    progressBar.style.width = '100%';
+                    setTimeout(() => {
+                        loadingScreen.classList.add('hidden');
+                        setTimeout(() => loadingScreen.style.display = 'none', 500);
+                    }, 300);
+                }
+            }, 500);
+            // Stop checking after 10 sec
+            setTimeout(() => clearInterval(checkGame), 10000);
+        }, 1000);
+    </script>
 </body>
 </html>
