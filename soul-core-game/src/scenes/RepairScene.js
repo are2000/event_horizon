@@ -1,4 +1,5 @@
 import { t, currentLang } from '../data/localization.js';
+const Phaser = window.Phaser;
 
 export class RepairScene extends Phaser.Scene {
     constructor() {

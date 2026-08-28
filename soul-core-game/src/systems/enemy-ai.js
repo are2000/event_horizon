@@ -1,4 +1,5 @@
 import { ENEMY_DB } from '../data/ships.js';
+const Phaser = window.Phaser;
 
 export class EnemyAI {
     constructor(scene, x, y, type) {

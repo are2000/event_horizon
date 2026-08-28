@@ -1,4 +1,5 @@
 import { ENEMY_TYPES } from '../config.js';
+const Phaser = window.Phaser;
 
 export const ENEMY_DB = {
     [ENEMY_TYPES.FIGHTER]: {

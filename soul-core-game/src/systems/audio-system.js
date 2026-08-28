@@ -1,3 +1,4 @@
+const Phaser = window.Phaser;
 export class AudioSystem {
     constructor(scene) {
         this.scene = scene;

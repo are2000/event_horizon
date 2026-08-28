@@ -1,3 +1,4 @@
+const Phaser = window.Phaser;
 export const L10N = {
     en: {
         play: 'PLAY',

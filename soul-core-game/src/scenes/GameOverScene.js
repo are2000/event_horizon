@@ -1,5 +1,6 @@
 import { t, currentLang } from '../data/localization.js';
 import { SaveSystem } from '../systems/save-system.js';
+const Phaser = window.Phaser;
 
 export class GameOverScene extends Phaser.Scene {
     constructor() {

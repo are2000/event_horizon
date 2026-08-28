@@ -1,3 +1,4 @@
+const Phaser = window.Phaser;
 export class PreloadScene extends Phaser.Scene {
     constructor() {
         super('PreloadScene');

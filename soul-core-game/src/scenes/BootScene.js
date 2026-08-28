@@ -1,4 +1,5 @@
 import { setLanguage, currentLang } from '../data/localization.js';
+const Phaser = window.Phaser;
 
 export class BootScene extends Phaser.Scene {
     constructor() {

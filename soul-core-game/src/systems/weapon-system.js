@@ -1,4 +1,5 @@
 import { MOUNT_ARCS, MOUNT_POSITIONS, WEAPON_TYPES } from '../config.js';
+const Phaser = window.Phaser;
 
 export class WeaponMount {
     constructor(scene, mountPosition, offsetX, offsetY) {

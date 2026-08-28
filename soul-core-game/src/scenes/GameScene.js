@@ -9,6 +9,7 @@ import { SectorSystem } from '../systems/sector-system.js';
 import { SaveSystem } from '../systems/save-system.js';
 import { AudioSystem } from '../systems/audio-system.js';
 import { getEquipment, INITIAL_LOADOUT } from '../data/equipment.js';
+const Phaser = window.Phaser;
 
 export class GameScene extends Phaser.Scene {
     constructor() {

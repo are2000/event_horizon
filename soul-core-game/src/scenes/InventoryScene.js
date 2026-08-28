@@ -1,5 +1,6 @@
 import { t, currentLang } from '../data/localization.js';
 import { getEquipment } from '../data/equipment.js';
+const Phaser = window.Phaser;
 
 export class InventoryScene extends Phaser.Scene {
     constructor() {

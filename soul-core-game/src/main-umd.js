@@ -1,4 +1,6 @@
-import Phaser from 'phaser';
+// UMD version - uses global Phaser from CDN script tag
+// This is more reliable for preview environments where importmap may fail
+
 import { GAME_CONFIG } from './config.js';
 import { BootScene } from './scenes/BootScene.js';
 import { PreloadScene } from './scenes/PreloadScene.js';
@@ -10,6 +12,15 @@ import { BossScene } from './scenes/BossScene.js';
 import { GameOverScene } from './scenes/GameOverScene.js';
 import { VictoryScene } from './scenes/VictoryScene.js';
 const Phaser = window.Phaser;
+
+
+if (!Phaser) {
+    console.error('Phaser global not found!');
+    document.getElementById('debug-text').textContent = 'Phaser not found! / لم يتم العثور على Phaser';
+    throw new Error('Phaser not loaded');
+}
+
+console.log('Phaser UMD version:', Phaser.VERSION);
 
 const config = {
     type: Phaser.AUTO,
@@ -44,27 +55,38 @@ const config = {
     }
 };
 
-// Hide HTML loading after Phaser boots
 window.addEventListener('load', () => {
     const game = new Phaser.Game(config);
 
-    // Handle resize for mobile portrait
     window.addEventListener('resize', () => {
         if (game.scale) {
             game.scale.refresh();
         }
     });
 
-    // Prevent context menu
     document.addEventListener('contextmenu', e => e.preventDefault());
 
-    // Prevent scrolling
     document.addEventListener('touchmove', e => {
         if (e.target.closest('#game-container')) {
             e.preventDefault();
         }
     }, { passive: false });
 
-    console.log('Soul Core: The Great Decay - Game initialized');
+    console.log('Soul Core: The Great Decay - Game initialized (UMD)');
     console.log('Config:', GAME_CONFIG);
+    
+    // Hide loading screen after boot
+    setTimeout(() => {
+        const ls = document.getElementById('loading-screen');
+        if (ls) {
+            ls.classList.add('hidden');
+            setTimeout(() => ls.style.display = 'none', 800);
+        }
+    }, 1000);
 });
+
+// Also start immediately if window already loaded
+if (document.readyState === 'complete') {
+    const game = new Phaser.Game(config);
+    console.log('Game started immediately (readyState complete)');
+}

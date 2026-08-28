@@ -1,4 +1,5 @@
 import { getEquipment, getMergeResult } from '../data/equipment.js';
+const Phaser = window.Phaser;
 
 export class InventorySystem {
     constructor(width = 5, height = 6) {

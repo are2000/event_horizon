@@ -2,6 +2,7 @@ import { GAME_CONFIG, SECTOR_TYPES } from '../config.js';
 import { EnemyAI } from './enemy-ai.js';
 import { ENEMY_TYPES } from '../config.js';
 import { rollLoot } from '../data/equipment.js';
+const Phaser = window.Phaser;
 
 export class SectorSystem {
     constructor(scene, sectorId = 1) {

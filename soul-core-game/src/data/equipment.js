@@ -1,3 +1,4 @@
+const Phaser = window.Phaser;
 // Equipment data model per design doc section 21
 export const EQUIPMENT_DB = {
     // Weapons Tier 1

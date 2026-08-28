@@ -1,4 +1,5 @@
 import { GameScene } from './GameScene.js';
+const Phaser = window.Phaser;
 
 // BossScene is a specialized GameScene for sector 5
 // For Vertical Slice, boss is integrated in GameScene sector 5

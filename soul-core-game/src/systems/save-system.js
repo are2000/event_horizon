@@ -1,3 +1,4 @@
+const Phaser = window.Phaser;
 export class SaveSystem {
     constructor() {
         this.key = 'soul_core_save_v1';

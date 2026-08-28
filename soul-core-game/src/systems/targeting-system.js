@@ -1,4 +1,5 @@
 import { TARGET_PRIORITIES } from '../config.js';
+const Phaser = window.Phaser;
 
 export class TargetingSystem {
     constructor(scene) {

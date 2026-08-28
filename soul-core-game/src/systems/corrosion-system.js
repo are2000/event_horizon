@@ -1,4 +1,5 @@
 import { GAME_CONFIG } from '../config.js';
+const Phaser = window.Phaser;
 
 export class CorrosionSystem {
     constructor(shipSystem) {

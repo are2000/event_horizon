@@ -1,5 +1,6 @@
 import { t, currentLang, setLanguage, getSectorName } from '../data/localization.js';
 import { SaveSystem } from '../systems/save-system.js';
+const Phaser = window.Phaser;
 
 export class MainMenuScene extends Phaser.Scene {
     constructor() {

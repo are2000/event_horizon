@@ -1,3 +1,4 @@
+const Phaser = window.Phaser;
 export const GAME_CONFIG = {
     width: 720,
     height: 1280,
