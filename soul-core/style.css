@@ -1,0 +1,106 @@
+/* ==========================================================================
+   Soul Core: The Great Decay — layout / shell styles
+   --------------------------------------------------------------------------
+   The game renders *everything* on the canvas (including the virtual
+   joystick and HUD), so CSS here only has one job: make a perfectly
+   fitting, gesture-safe, full-bleed portrait stage for the canvas.
+   ========================================================================== */
+
+/* Safe-area insets are exposed to JS through these custom properties so the
+   HUD / joystick can avoid the notch and the iOS home indicator. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --bg: #05060a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden; /* no rubber-band / page scroll */
+
+  /* Kill every mobile browser gesture that would fight the game:
+     pull-to-refresh, swipe navigation, double-tap zoom, long-press menu... */
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Fixed stage: immune to iOS's shrinking/expanding URL bar because it is
+   positioned against the *layout* viewport, and JS re-syncs the canvas
+   backing store on resize / orientationchange / visualViewport changes. */
+#app {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* dvh fallback for browsers without dynamic viewport units */
+  height: 100dvh;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none; /* let JS own all pointer events */
+  background: var(--bg);
+  /* Hint to compositors that this canvas changes every frame. */
+  will-change: transform;
+}
+
+/* Boot-failure panel (only visible if JS throws before the first frame). */
+#fatal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: #cfe0ff;
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: rgba(5, 6, 10, 0.94);
+}
+
+#fatal h1 {
+  margin: 0;
+  font-size: 16px;
+  color: #ff4d6d;
+}
+
+#fatal p {
+  margin: 0;
+  max-width: 34ch;
+}
+
+#fatal .hint {
+  color: rgba(207, 224, 255, 0.55);
+}
+
+#fatal code {
+  color: #35e0ff;
+}
+
+/* Optional: dim the canvas slightly while the tab is backgrounded
+   (purely cosmetic — the game loop self-pauses on visibilitychange). */
+body.is-hidden #game {
+  filter: brightness(0.6);
+}

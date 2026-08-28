@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+
+  <!--
+    Mobile-first viewport:
+    - width=device-width  : use the real device width (no 980px fallback layout)
+    - initial/min/max = 1 + user-scalable=no : kill double-tap & pinch zoom
+    - viewport-fit=cover  : let the canvas run under iOS notch / home indicator
+  -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+
+  <meta name="theme-color" content="#05060a" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Soul Core: The Great Decay - a top-down roguelite space survival game." />
+
+  <title>Soul Core: The Great Decay</title>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- #app is a fixed, full-viewport stage. The canvas is sized in JS (CSS px * DPR). -->
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <!-- Shown if the module bundle fails to boot (missing server, parse error, ...). -->
+    <div id="fatal" hidden>
+      <h1>Soul Core failed to start</h1>
+      <p id="fatal-msg"></p>
+      <p class="hint">Serve this folder over HTTP (ES modules do not run from <code>file://</code>):<br />
+        <code>python3 -m http.server 8000</code></p>
+    </div>
+  </div>
+
+  <noscript>
+    <p style="color:#cfe0ff;font:14px monospace;padding:16px">
+      Soul Core: The Great Decay needs JavaScript enabled.
+    </p>
+  </noscript>
+
+  <!--
+    ES modules give us real file-level modularity with zero build step.
+    NOTE: modules require an http(s) origin - opening index.html via file://
+    will be blocked by CORS. Any static server works (see README.md).
+  -->
+  <script>
+    // Surface boot failures instead of a silent black screen.
+    window.addEventListener('error', (e) => {
+      const box = document.getElementById('fatal');
+      const msg = document.getElementById('fatal-msg');
+      if (box && msg && box.hidden) {
+        box.hidden = false;
+        msg.textContent = (e.message || 'Unknown error') + (e.filename ? ' @ ' + e.filename : '');
+      }
+    });
+  </script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

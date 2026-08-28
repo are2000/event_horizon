@@ -1,0 +1,13 @@
+{
+  "name": "soul-core",
+  "version": "0.1.0",
+  "description": "Soul Core: The Great Decay - a top-down roguelite space survival game. Vanilla JS + HTML5 Canvas, zero dependencies.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node tools/sim.test.js && node tools/boot.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
