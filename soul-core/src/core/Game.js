@@ -24,6 +24,12 @@ import { CONFIG } from '../config.js';
 import { Ship } from '../entities/Ship.js';
 import { ParticleSystem } from '../fx/ParticleSystem.js';
 import { SystemsManager } from '../systems/SystemsManager.js';
+import { WeightSystem } from '../systems/WeightSystem.js';
+import { DriveSystem } from '../systems/DriveSystem.js';
+import { PowerSystem } from '../systems/PowerSystem.js';
+import { HeatSystem } from '../systems/HeatSystem.js';
+import { CorrosionSystem } from '../systems/CorrosionSystem.js';
+import { HullSystem } from '../systems/HullSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { VirtualJoystick } from '../ui/VirtualJoystick.js';
 import { World } from '../world/World.js';
@@ -33,6 +39,17 @@ import { InputManager } from './InputManager.js';
 import { Loop } from './Loop.js';
 import { Viewport } from './Viewport.js';
 import { clamp, font, TAU } from './MathUtils.js';
+
+/**
+ * Install order == update order for the core systems:
+ *   weight     — load factor (read by physics the same step)
+ *   drive      — the placeholder consumer: draws power, generates heat
+ *   power      — capacitor recharge
+ *   heat       — cooling + overheat penalties
+ *   corrosion  — the run timer; emits 'ship:meltdown' at 100%
+ *   hull       — damage intake; emits 'ship:destroyed' at 0
+ */
+const CORE_SYSTEM_ORDER = ['weight', 'drive', 'power', 'heat', 'corrosion', 'hull'];
 
 export class Game {
   /**
@@ -57,17 +74,35 @@ export class Game {
     this.particles = new ParticleSystem(opts.particleCapacity ?? 512);
     this.systems = new SystemsManager(this.ship, this.events);
 
+    /* The five core systems (Weight / Power / Heat / Corrosion / Hull) plus
+       the drive that consumes power and generates heat. Handy from devtools:
+       SoulCore.core.weight.addCargo(40) */
+    this.core = {
+      weight: new WeightSystem(),
+      drive: new DriveSystem(),
+      power: new PowerSystem(),
+      heat: new HeatSystem(),
+      corrosion: new CorrosionSystem(),
+      hull: new HullSystem(),
+    };
+    // Install order == update order: consumers run before the gauges they
+    // feed (drive draws power, then the capacitor recharges...).
+    for (const key of CORE_SYSTEM_ORDER) this.systems.install(this.core[key]);
+
     /* ----------------------------------------------------------------- ui -- */
     this.hud = new HUD(this.viewport, this.ship);
 
     /* -------------------------------------------------------------- state -- */
-    /** 'title' | 'playing' */
+    /** 'title' | 'playing' | 'gameover' */
     this.state = 'title';
     // Movement input stays off until the run starts, so a stray thumb on the
     // title screen can't fly the ship around behind the overlay.
     this.input.enabled = false;
     this.paused = false;
-    this.time = 0;
+    this.time = 0; // total time since boot (drives UI animation)
+    this.runTime = 0; // time survived in the current run
+    this.endReason = null; // 'meltdown' | 'destroyed'
+    this.runsCompleted = 0;
     this.debug = opts.debug ?? CONFIG.debug;
 
     /* --------------------------------------------------------------- loop -- */
@@ -96,6 +131,7 @@ export class Game {
       particles: this.particles,
       camera: this.camera,
       debug: this.debug,
+      state: this.state,
       frameDt: 0,
     };
     this._camTarget = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -116,10 +152,6 @@ export class Game {
 
     this._bindEvents();
     this.input.attach();
-
-    // Kick off one simulation frame's worth of state so the title screen
-    // renders a fully initialised ship rather than a null modifier set.
-    this.systems.update(CONFIG.loop.fixedStep);
 
     this.loop.start();
     return this;
@@ -155,14 +187,24 @@ export class Game {
       }
     });
 
-    // Start the run on the first touch / click / key.
-    this.events.on('input:tap', () => {
-      if (this.state === 'title') this.startRun();
-    });
-    this.events.on('input:down', () => {
-      if (this.state === 'title') this.startRun();
-    });
+    // Start (or restart) the run on the first touch / click / key.
+    this.events.on('input:tap', () => this._onConfirm());
+    this.events.on('input:down', () => this._onConfirm());
     this.events.on('input:key', ({ code }) => this._onKey(code));
+
+    /* --- the run ends when the core systems say so ------------------------ */
+    this.events.on('ship:meltdown', () => this._endRun('meltdown'));
+    this.events.on('ship:destroyed', () => this._endRun('destroyed'));
+    this.events.on('ship:damaged', ({ amount }) => {
+      // Screen flash scaled by how hard we were hit.
+      this.hud.flash = Math.min(1, this.hud.flash + amount / 55);
+    });
+  }
+
+  /** Tap / click: start the run, or restart after a game over. */
+  _onConfirm() {
+    if (this.state === 'title') this.startRun();
+    else if (this.state === 'gameover') this.restart();
   }
 
   onResize() {
@@ -179,7 +221,74 @@ export class Game {
     if (this.state === 'playing') return;
     this.state = 'playing';
     this.input.enabled = true;
+    this.runTime = 0;
     this.events.emit('run:start', { ship: this.ship, world: this.world });
+  }
+
+  /**
+   * End the run. Called by the 'ship:meltdown' (corrosion hit 100%) and
+   * 'ship:destroyed' (hull hit 0) events, so the Game never has to poll the
+   * gauges — the systems decide when you die.
+   * @param {'meltdown'|'destroyed'} reason
+   */
+  _endRun(reason) {
+    if (this.state !== 'playing') return;
+    this.state = 'gameover';
+    this.endReason = reason;
+    this.input.enabled = false;
+    this.ship.alive = false;
+    this.ship.visible = false; // the wreck is now debris + particles
+    this.hud.flash = 1;
+    this._explode();
+    this.runsCompleted++;
+    this.events.emit('run:end', { reason, time: this.runTime, ship: this.ship });
+  }
+
+  /** Big, cheap, satisfying explosion: three debris shells + full shake. */
+  _explode() {
+    const { x, y } = this.ship;
+    this.particles.burst(150, {
+      x, y, speed: 520, life: 1.1, size: 6, color: '#ffb347', drag: 1.6, jitter: 24,
+    });
+    this.particles.burst(70, {
+      x, y, speed: 240, life: 1.9, size: 10, color: '#ff4d6d', drag: 1.1, jitter: 36,
+    });
+    this.particles.burst(45, {
+      x, y, speed: 760, life: 0.45, size: 3, color: '#ffffff', drag: 3.2, jitter: 10,
+    });
+    this.camera.addShake(this.camera.maxShake);
+  }
+
+  /**
+   * Fresh run: new sector, factory-fresh ship, every system reset. Ratings
+   * bought in the meta layer survive (Ship.reset keeps the max* stats).
+   * @param {number} [seed] defaults to the next seed in sequence
+   */
+  restart(seed) {
+    const nextSeed = seed ?? (this.world.seed + 1) >>> 0;
+    this.world = new World({
+      seed: nextSeed,
+      width: this.world.width,
+      height: this.world.height,
+      obstacleCount: this.world.obstacleCount,
+      gridSize: this.world.gridSize,
+    });
+    this.updateContext.world = this.world;
+    this._renderInfo.world = this.world; // the HUD minimap reads this
+
+    this.camera.setBounds(this.world.bounds.x, this.world.bounds.y, this.world.bounds.width, this.world.bounds.height);
+    this.ship.reset(this.world.width * 0.5, this.world.height * 0.5, -Math.PI / 2);
+    this.systems.reset();
+    this.particles.clear();
+    this.camera.snapTo(this.ship.x, this.ship.y);
+
+    this.hud.resetRun();
+    this.runTime = 0;
+    this.endReason = null;
+    this.state = 'playing';
+    this.input.enabled = true;
+    this.events.emit('run:start', { ship: this.ship, world: this.world, restart: true });
+    return this;
   }
 
   togglePause() {
@@ -187,12 +296,16 @@ export class Game {
     if (!this.paused) this.loop.resetTiming();
   }
 
-  respawn() {
-    this.ship.teleport(this.world.width * 0.5, this.world.height * 0.5, -Math.PI / 2);
-    this.ship.vx = 0;
-    this.ship.vy = 0;
-    this.camera.snapTo(this.ship.x, this.ship.y);
-    this.particles.clear();
+  /** Dump a quarter of the hold overboard (J) — the answer to being overloaded. */
+  jettisonCargo() {
+    const dropped = this.core.weight.jettison(this.ship.stats.maxWeight * 0.25);
+    if (dropped > 0) {
+      this.particles.burst(24, {
+        x: this.ship.x, y: this.ship.y, speed: 160, life: 0.9,
+        size: 4, color: '#8bd450', drag: 1.4, jitter: 14,
+      });
+    }
+    return dropped;
   }
 
   _onKey(code) {
@@ -205,38 +318,51 @@ export class Game {
         this.togglePause();
         break;
       case 'KeyR':
-        this.respawn();
+        this.restart();
+        break;
+      case 'KeyJ':
+        this.jettisonCargo();
         break;
       case 'Enter':
-        if (this.state === 'title') this.startRun();
+      case 'Space':
+        this._onConfirm();
         break;
       default:
         this._onDebugKey(code);
     }
   }
 
-  /** Debug-only gauges so the systems pipeline can be exercised right now. */
+  /**
+   * Debug-only gauge pokes (with ` on) so each system can be exercised
+   * without playing for four minutes first.
+   */
   _onDebugKey(code) {
     if (!this.debug) return;
-    const r = this.ship.resources;
+    const s = this.ship.stats;
     switch (code) {
-      case 'Digit1':
-        r.heat = clamp(r.heat + 0.25, 0, 1);
+      case 'Digit1': // +25% heat  -> watch the overheat penalty kick in
+        this.ship.generateHeat(s.maxHeat * 0.25);
         break;
-      case 'Digit2':
-        r.weight = clamp(r.weight + 0.15, 0, 1);
+      case 'Digit2': // +20% cargo mass -> watch acceleration die
+        this.core.weight.addCargo(s.maxWeight * 0.2);
         break;
-      case 'Digit3':
-        r.corrosion = clamp(r.corrosion + 0.15, 0, 1);
+      case 'Digit3': // +10% corrosion -> creep toward meltdown
+        s.coreCorrosion = clamp(s.coreCorrosion + 10, 0, 100);
         break;
-      case 'Digit4':
-        r.power = clamp(r.power - 0.25, 0, 1);
+      case 'Digit4': // drain 30% of the capacitor -> brownout
+        this.ship.consumePower(s.maxPower * 0.3);
         break;
-      case 'Digit0':
-        r.heat = 0;
-        r.weight = 0;
-        r.corrosion = 0;
-        r.power = 1;
+      case 'Digit5': // -25 hull
+        this.ship.damage(s.maxHull * 0.25);
+        this.systems.get('hull')?.events?.emit('ship:damaged', { amount: s.maxHull * 0.25, source: 'debug' });
+        break;
+      case 'Digit0': // full service
+        s.heat = 0;
+        s.power = s.maxPower;
+        s.coreCorrosion = 0;
+        s.hull = s.maxHull;
+        s.weight = 0;
+        this.ship.alive = true;
         break;
       default:
         break;
@@ -261,10 +387,15 @@ export class Game {
     this.input.update(dt);
     if (this.input.magnitude > 0.15) this.hud.notifyInput();
 
-    // 2. Systems -> modifiers (Weight/Heat/Power/Corrosion live here)
-    this.systems.update(dt);
+    // 2. Systems -> modifiers. Only while a run is live: the Great Decay
+    //    must not eat the hull while we're sitting on the title screen, and
+    //    frozen gauges on the game-over screen make the wreck readable.
+    if (this.state === 'playing') {
+      this.runTime += dt;
+      this.systems.update(dt);
+    }
 
-    // 3. Entities
+    // 3. Entities (on game over the hulk keeps drifting with its last modifiers)
     this.ship.update(dt, this.updateContext);
 
     // 4. World + FX
@@ -306,19 +437,22 @@ export class Game {
     this.world.renderGround(ctx, this.camera, vp);
     this.world.renderObstacles(ctx, this.camera);
     this.particles.render(ctx);
-    this.ship.render(ctx, alpha);
+    if (this.ship.visible) this.ship.render(ctx, alpha);
     if (this.debug) this._renderWorldDebug(ctx, alpha);
     ctx.restore();
 
     /* --- screen space UI ---------------------------------------------------- */
     this.hud.update(frameDt);
+    this.hud.renderFlash(ctx);
     this.joystick.render(ctx);
 
     this._renderInfo.debug = this.debug;
+    this._renderInfo.state = this.state;
     this._renderInfo.frameDt = frameDt;
     this.hud.render(ctx, this._renderInfo);
 
     if (this.state === 'title') this._renderTitle(ctx, frameDt);
+    else if (this.state === 'gameover') this._renderGameOver(ctx);
     if (this.paused) this._renderPaused(ctx);
   }
 
@@ -381,7 +515,7 @@ export class Game {
 
     ctx.fillStyle = p.textDim;
     ctx.font = font(11, 500);
-    ctx.fillText('PHASE 1 · FLIGHT PROTOTYPE', cx, cy + 58);
+    ctx.fillText('PHASE 2 · CORE SYSTEMS', cx, cy + 58);
 
     ctx.globalAlpha = pulse;
     ctx.fillStyle = p.accent;
@@ -391,7 +525,59 @@ export class Game {
 
     ctx.fillStyle = p.textDim;
     ctx.font = font(10, 500);
-    ctx.fillText('virtual stick · WASD on desktop · ` for debug', cx, h * 0.62 + 22);
+    ctx.fillText('the core is already decaying — watch the purple', cx, h * 0.62 + 22);
+    ctx.fillText('virtual stick · WASD on desktop · ` for debug', cx, h * 0.62 + 38);
+
+    ctx.restore();
+  }
+
+  /** Meltdown / destroyed end screen. */
+  _renderGameOver(ctx) {
+    const vp = this.viewport;
+    const p = CONFIG.palette;
+    const w = vp.width;
+    const h = vp.height;
+    const meltdown = this.endReason === 'meltdown';
+
+    ctx.save();
+    ctx.fillStyle = meltdown ? 'rgba(24, 6, 34, 0.78)' : 'rgba(28, 6, 10, 0.78)';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const cx = w * 0.5;
+    const cy = h * 0.38;
+    const pulse = 0.55 + 0.45 * Math.sin(this.time * 2.4);
+
+    ctx.fillStyle = meltdown ? p.gaugeCorrosion : p.gaugeCritical;
+    ctx.font = font(Math.min(30, w * 0.088), 800);
+    ctx.fillText(meltdown ? 'CORE MELTDOWN' : 'HULL BREACH', cx, cy);
+
+    ctx.fillStyle = p.text;
+    ctx.font = font(12, 600);
+    ctx.fillText(
+      meltdown ? 'The Great Decay finished what the void started.'
+        : 'The plating gave out before the core did.',
+      cx, cy + 28,
+    );
+
+    const t = this.runTime;
+    const mm = String(Math.floor(t / 60)).padStart(2, '0');
+    const ss = String(Math.floor(t % 60)).padStart(2, '0');
+    ctx.fillStyle = p.textDim;
+    ctx.font = font(11, 500);
+    ctx.fillText(`SURVIVED ${mm}:${ss}`, cx, cy + 56);
+    const stats = this.ship.stats;
+    ctx.fillText(
+      `CORROSION ${stats.coreCorrosion.toFixed(0)}%   ·   HULL ${Math.max(0, stats.hull).toFixed(0)}   ·   RUN #${this.runsCompleted + 1}`,
+      cx, cy + 74,
+    );
+
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = p.accent;
+    ctx.font = font(13, 700);
+    ctx.fillText('TAP TO RESTART', cx, h * 0.66);
+    ctx.globalAlpha = 1;
 
     ctx.restore();
   }
@@ -413,6 +599,21 @@ export class Game {
   }
 
   /* ================================================================== misc == */
+
+  /** Human-readable state for the console / devtools. */
+  status() {
+    const s = this.ship.stats;
+    return {
+      state: this.state,
+      runTime: this.runTime.toFixed(1),
+      hull: `${s.hull.toFixed(0)}/${s.maxHull}`,
+      power: `${s.power.toFixed(0)}/${s.maxPower}`,
+      heat: `${s.heat.toFixed(0)}/${s.maxHeat}`,
+      corrosion: `${s.coreCorrosion.toFixed(1)}%`,
+      weight: `${s.weight.toFixed(1)}/${s.maxWeight}`,
+      thrustMul: this.systems.modifiers.thrustMul.toFixed(2),
+    };
+  }
 
   destroy() {
     this.loop.stop();

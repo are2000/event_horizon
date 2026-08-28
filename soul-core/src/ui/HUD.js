@@ -1,19 +1,66 @@
 /**
  * HUD.js
  * ----------------------------------------------------------------------------
- * Screen-space UI drawn on the canvas (no DOM), in CSS pixels:
+ * Screen-space UI drawn on the canvas (no DOM), in CSS pixels.
  *
- *   • resource bars   — the four planned systems: WEIGHT / HEAT / POWER / CORROSION
- *   • speed + drift   — instant feedback for the inertia work in Phase 1
- *   • minimap         — proves the world is bigger than the screen
- *   • hint line       — fades out after the first input
- *   • debug overlay   — FPS, step counts, physics state, modifier breakdown
+ *   ┌──────────────────────────────────────────┐
+ *   │ HULL       ███████████████░░░░░  100/100 │  green
+ *   │ POWER      ████████████░░░░░░░░   78/100 │  cyan
+ *   │ HEAT       ██████░░░░░░░░░░░░░░   31/100 │  orange (red past the ceiling)
+ *   │ CORROSION  ██░░░░░░░░░░░░░░░░░    6/100  │  purple
+ *   │ MASS 34.0 / 100            ⚠ CORE OVERHEAT│
+ *   └──────────────────────────────────────────┘
  *
- * Everything is placeholder geometry + type; when real art lands, only this
- * file changes.
+ * Plus: minimap (top-right, below the panel), speed/drift readout
+ * (bottom-right), hint line, and the debug overlay.
+ *
+ * Everything here is placeholder geometry + type; when real art lands, only
+ * this file changes.
  */
 import { CONFIG } from '../config.js';
 import { clamp, font, roundRectPath } from '../core/MathUtils.js';
+
+/** Bar definitions: label, colour, and how to read the value. */
+const GAUGES = [
+  {
+    key: 'hull',
+    label: 'HULL',
+    color: 'gaugeHull',
+    current: (s) => s.hull,
+    max: (s) => s.maxHull,
+    ratio: (ship) => ship.hullRatio,
+    critical: (ship) => ship.hullRatio < 0.25,
+  },
+  {
+    key: 'power',
+    label: 'POWER',
+    color: 'gaugePower',
+    current: (s) => s.power,
+    max: (s) => s.maxPower,
+    ratio: (ship) => ship.powerRatio,
+    critical: (ship) => ship.powerRatio < 0.15,
+  },
+  {
+    key: 'heat',
+    label: 'HEAT',
+    color: 'gaugeHeat',
+    current: (s) => s.heat,
+    max: (s) => s.maxHeat,
+    // Heat can exceed its maximum — the bar fills the redline band in red.
+    ratio: (ship) => clamp(ship.heatRatio / CONFIG.systems.heatCeiling, 0, 1),
+    over: (ship) => (ship.isOverheating ? 1 - ship.overheatSeverity : 0),
+    critical: (ship) => ship.isOverheating,
+  },
+  {
+    key: 'corrosion',
+    label: 'CORROSION',
+    color: 'gaugeCorrosion',
+    current: (s) => s.coreCorrosion,
+    max: () => 100,
+    ratio: (ship) => ship.corrosionRatio,
+    critical: (ship) => ship.corrosionRatio >= CONFIG.systems.meltdownWarning,
+  },
+];
 
 export class HUD {
   /**
@@ -24,150 +71,247 @@ export class HUD {
     this.viewport = viewport;
     this.ship = ship;
 
-    this.margin = CONFIG.hud.margin;
-    this.barHeight = CONFIG.hud.barHeight;
-    this.barGap = CONFIG.hud.barGap;
-    this.labelWidth = CONFIG.hud.labelWidth;
-
-    this.barWidth = 120;
-    this.panelWidth = 200;
-    this.panelHeight = 100;
+    const h = CONFIG.hud;
+    this.margin = h.margin;
+    this.maxPanelWidth = h.maxPanelWidth;
+    this.panelWidth = 300;
+    this.barHeight = h.barHeight;
+    this.barGap = h.barGap;
+    this.labelWidth = h.labelWidth;
+    this.valueWidth = h.valueWidth;
     this.minimapSize = 84;
 
-    /** Hint fades away once the player touches the stick. */
+    /** Hint text fades away after the first input. */
     this.hintAlpha = 1;
     this.hintTimer = 0;
     this.hintDismissed = false;
 
+    /** Screen flash (0..1) driven by Game on damage/meltdown. */
+    this.flash = 0;
+
     this.layout();
+  }
+
+  /** Point the HUD at a (new) ship — used by Game.restart(). */
+  setShip(ship) {
+    this.ship = ship;
+    return this;
   }
 
   layout() {
     const vp = this.viewport;
-    this.barWidth = clamp(vp.width * CONFIG.hud.barFraction, CONFIG.hud.minBarWidth, CONFIG.hud.maxBarWidth);
-    this.panelWidth = this.labelWidth + 10 + this.barWidth + 14;
-    this.panelHeight = 22 + 4 * (this.barHeight + this.barGap) + 8;
-    this.minimapSize = clamp(vp.width * 0.24, 64, 108);
+    this.panelWidth = Math.min(vp.width - this.margin * 2, this.maxPanelWidth);
+    this.minimapSize = clamp(vp.width * CONFIG.hud.minimapFraction, 64, 108);
+    this.barWidth = Math.max(
+      80,
+      this.panelWidth - this.labelWidth - this.valueWidth - 20, // 20 = padding
+    );
+    this.panelHeight = 10 + GAUGES.length * (this.barHeight + this.barGap) + 16;
   }
 
-  /** Called when the player first provides movement input. */
   notifyInput() {
     this.hintDismissed = true;
   }
 
+  /** Reset transient UI state for a new run. */
+  resetRun() {
+    this.hintAlpha = 1;
+    this.hintTimer = 0;
+    this.hintDismissed = false;
+    this.flash = 0;
+  }
+
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {object} info { loop, input, world, systems, particles, camera, debug, frameDt }
+   * @param {object} info { loop, input, world, systems, particles, camera, debug, frameDt, state }
    */
   render(ctx, info) {
     const vp = this.viewport;
     const safe = vp.safeArea;
-    const p = CONFIG.palette;
 
     ctx.save();
     ctx.textBaseline = 'middle';
 
-    /* =============================================== resource panel ======= */
+    /* ================================================== gauge panel ======= */
     const px = this.margin + safe.left;
     const py = this.margin + safe.top;
 
-    ctx.fillStyle = 'rgba(4, 8, 18, 0.45)';
+    ctx.fillStyle = 'rgba(4, 8, 18, 0.5)';
     roundRectPath(ctx, px, py, this.panelWidth, this.panelHeight, 10);
     ctx.fill();
     ctx.strokeStyle = 'rgba(120, 170, 255, 0.18)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Header
-    ctx.font = font(9, 700);
-    ctx.fillStyle = p.textDim;
-    ctx.textAlign = 'left';
-    ctx.fillText('SOUL CORE // CORE STATUS', px + 10, py + 12);
-
-    const r = this.ship.resources;
-    const rows = [
-      { label: 'WEIGHT', value: r.weight, color: p.weight },
-      { label: 'HEAT', value: r.heat, color: p.heat },
-      { label: 'POWER', value: r.power, color: p.power },
-      { label: 'CORROSION', value: r.corrosion, color: p.corrosion },
-    ];
-
-    let y = py + 26;
-    for (let i = 0; i < rows.length; i++) {
-      this._drawBar(ctx, px + 10, y, this.labelWidth, this.barWidth, rows[i]);
+    let y = py + 10 + this.barHeight * 0.5;
+    for (let i = 0; i < GAUGES.length; i++) {
+      this._drawGauge(ctx, px + 10, y, GAUGES[i], info);
       y += this.barHeight + this.barGap;
     }
 
-    /* =============================================== speed / drift ======== */
-    const speed = this.ship.speedValue ?? 0;
-    const drift = Math.abs(this.ship.lateralSpeed);
+    /* ================================================== status line ======= */
+    this._drawStatusLine(ctx, px + 10, py + this.panelHeight - 11);
+
+    /* ================================================== speed / drift ===== */
+    this._drawSpeed(ctx, safe);
+
+    /* ================================================== minimap =========== */
+    if (info.world) this._drawMinimap(ctx, info.world, info.camera, safe);
+
+    /* ================================================== hint ============== */
+    if (this.hintAlpha > 0.01) {
+      ctx.textAlign = 'center';
+      ctx.font = font(11, 600);
+      ctx.globalAlpha = this.hintAlpha;
+      ctx.fillStyle = CONFIG.palette.textDim;
+      ctx.fillText('DRAG TO THRUST · RELEASE TO DRIFT', vp.width * 0.5, vp.height - safe.bottom - this.margin - 96);
+      ctx.globalAlpha = 1;
+    }
+
+    /* ================================================== debug ============= */
+    if (info.debug) this._drawDebug(ctx, info, safe);
+
+    ctx.restore();
+  }
+
+  _drawGauge(ctx, x, y, gauge, info) {
+    const p = CONFIG.palette;
+    const ship = this.ship;
+    const stats = ship.stats;
+    const h = this.barHeight;
+
+    /* --- label ------------------------------------------------------------ */
+    ctx.textAlign = 'left';
+    ctx.font = font(9, 700);
+    ctx.fillStyle = gauge.critical(ship) ? p.gaugeCritical : p.textDim;
+    ctx.fillText(gauge.label, x, y + 0.5);
+
+    /* --- track ------------------------------------------------------------ */
+    const bx = x + this.labelWidth;
+    ctx.fillStyle = p.barBg;
+    roundRectPath(ctx, bx, y - h * 0.5, this.barWidth, h, h * 0.5);
+    ctx.fill();
+
+    /* --- fill -------------------------------------------------------------- */
+    const ratio = clamp(gauge.ratio(ship), 0, 1);
+    const w = Math.max(0, ratio) * this.barWidth;
+    if (w > 0.5) {
+      const critical = gauge.critical(ship);
+      let color = p[gauge.color];
+      if (gauge.key === 'heat' && ship.isOverheating) color = p.gaugeCritical;
+
+      // Critical gauges pulse so you notice them in peripheral vision.
+      if (critical) {
+        ctx.globalAlpha = 0.65 + 0.35 * Math.abs(Math.sin(ship.age * 6));
+      }
+      ctx.fillStyle = color;
+      roundRectPath(ctx, bx, y - h * 0.5, w, h, h * 0.5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    /* --- redline marker (how far past maxHeat we are) --------------------- */
+    if (gauge.key === 'heat' && ship.isOverheating) {
+      const ceilingX = bx + (this.barWidth / CONFIG.systems.heatCeiling);
+      const overW = w - this.barWidth / CONFIG.systems.heatCeiling;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(ship.age * 12));
+      ctx.fillStyle = '#ffffff';
+      roundRectPath(ctx, ceilingX, y - h * 0.5, Math.max(2, overW), h, h * 0.5);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    /* --- value ------------------------------------------------------------ */
+    const cur = gauge.current(stats);
+    const max = gauge.max(stats);
+    ctx.textAlign = 'right';
+    ctx.font = font(9, 700);
+    ctx.fillStyle = gauge.critical(ship) ? p.gaugeCritical : p.text;
+    ctx.fillText(`${Math.round(cur)}/${Math.round(max)}`, x + this.panelWidth - 20, y + 0.5);
+  }
+
+  _drawStatusLine(ctx, x, y) {
+    const p = CONFIG.palette;
+    const ship = this.ship;
+
+    // Mass readout (weight is a stat, not one of the four bars).
+    ctx.textAlign = 'left';
+    ctx.font = font(9, 700);
+    ctx.fillStyle = p.textDim;
+    ctx.fillText('MASS', x, y);
+
+    const massText = `${ship.stats.weight.toFixed(1)} / ${ship.stats.maxWeight}`;
+    ctx.fillStyle = ship.isOverloaded ? p.gaugeCritical : p.weight;
+    ctx.fillText(massText, x + 34, y);
+
+    // Highest-priority warning on the right.
+    let warning = null;
+    let color = p.text;
+    if (ship.corrosionRatio >= CONFIG.systems.meltdownWarning) {
+      warning = ship.corrosionRatio >= 1 ? 'CORE MELTDOWN' : 'MELTDOWN IMMINENT';
+      color = p.gaugeCorrosion;
+    } else if (ship.isOverheating) {
+      warning = 'CORE OVERHEAT';
+      color = p.gaugeCritical;
+    } else if (ship.powerRatio < 0.15) {
+      warning = 'POWER CRITICAL';
+      color = p.gaugePower;
+    } else if (ship.hullRatio < 0.25) {
+      warning = 'HULL BREACH';
+      color = p.gaugeCritical;
+    } else if (ship.isOverloaded) {
+      warning = 'HOLD FULL — THRUST 0';
+      color = p.gaugeCritical;
+    } else if (ship.weightRatio > 0.85) {
+      warning = 'OVERLOAD';
+      color = p.gaugeHeat;
+    }
+
+    if (warning) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.7 + 0.3 * Math.abs(Math.sin(ship.age * 5));
+      ctx.fillText(`▲ ${warning}`, x + this.panelWidth - 20, y);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  _drawSpeed(ctx, safe) {
+    const vp = this.viewport;
+    const p = CONFIG.palette;
+    const ship = this.ship;
+    const speed = ship.speedValue ?? 0;
+    const drift = Math.abs(ship.lateralSpeed);
+    const right = vp.width - safe.right - this.margin;
     const bottomY = vp.height - safe.bottom - this.margin;
 
     ctx.textAlign = 'right';
     ctx.font = font(11, 700);
     ctx.fillStyle = p.text;
-    ctx.fillText(`${speed.toFixed(0)} u/s`, vp.width - safe.right - this.margin, bottomY - 34);
+    ctx.fillText(`${speed.toFixed(0)} u/s`, right, bottomY - 34);
     ctx.font = font(9, 600);
     ctx.fillStyle = p.textDim;
-    ctx.fillText('SPEED', vp.width - safe.right - this.margin, bottomY - 20);
+    ctx.fillText('SPEED', right, bottomY - 20);
 
     // Drift meter — turns cyan as the ship slides sideways.
     const driftT = clamp(drift / 260, 0, 1);
     ctx.fillStyle = p.textDim;
-    ctx.fillText('DRIFT', vp.width - safe.right - this.margin, bottomY - 52);
+    ctx.fillText('DRIFT', right, bottomY - 52);
     ctx.fillStyle = p.barBg;
-    roundRectPath(ctx, vp.width - safe.right - this.margin - 86, bottomY - 56, 70, 4, 2);
+    roundRectPath(ctx, right - 86, bottomY - 56, 70, 4, 2);
     ctx.fill();
     ctx.fillStyle = p.accent;
-    roundRectPath(ctx, vp.width - safe.right - this.margin - 86, bottomY - 56, Math.max(2, 70 * driftT), 4, 2);
+    roundRectPath(ctx, right - 86, bottomY - 56, Math.max(2, 70 * driftT), 4, 2);
     ctx.fill();
-
-    /* =============================================== minimap ============== */
-    if (info.world) this._drawMinimap(ctx, info.world, info.camera, safe);
-
-    /* =============================================== hint ================= */
-    if (this.hintAlpha > 0.01) {
-      ctx.textAlign = 'center';
-      ctx.font = font(11, 600);
-      ctx.globalAlpha = this.hintAlpha;
-      ctx.fillStyle = p.textDim;
-      ctx.fillText('DRAG TO THRUST · RELEASE TO DRIFT', vp.width * 0.5, bottomY - 96);
-      ctx.globalAlpha = 1;
-    }
-
-    /* =============================================== debug ================ */
-    if (info.debug) this._drawDebug(ctx, info, px, py);
-
-    ctx.restore();
-  }
-
-  _drawBar(ctx, x, y, labelW, barW, row) {
-    const p = CONFIG.palette;
-    const h = this.barHeight;
-
-    ctx.textAlign = 'left';
-    ctx.font = font(9, 700);
-    ctx.fillStyle = p.textDim;
-    ctx.fillText(row.label, x, y + h * 0.5 + 0.5);
-
-    const bx = x + labelW + 10;
-    ctx.fillStyle = p.barBg;
-    roundRectPath(ctx, bx, y, barW, h, h * 0.5);
-    ctx.fill();
-
-    const w = Math.max(0, Math.min(1, row.value)) * barW;
-    if (w > 0.5) {
-      ctx.fillStyle = row.color;
-      roundRectPath(ctx, bx, y, w, h, h * 0.5);
-      ctx.fill();
-    }
   }
 
   _drawMinimap(ctx, world, camera, safe) {
     const vp = this.viewport;
     const size = this.minimapSize;
     const x = vp.width - safe.right - this.margin - size;
-    const y = this.margin + safe.top;
+    const y = this.margin + safe.top + this.panelHeight + 8;
     const scale = size / Math.max(world.width, world.height);
     const p = CONFIG.palette;
 
@@ -179,7 +323,6 @@ export class HUD {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Obstacles
     ctx.fillStyle = 'rgba(120, 140, 180, 0.55)';
     for (let i = 0; i < world.obstacles.length; i++) {
       const o = world.obstacles[i];
@@ -187,7 +330,6 @@ export class HUD {
       ctx.fillRect(x + o.x * scale - s * 0.5, y + o.y * scale - s * 0.5, s, s);
     }
 
-    // Visible viewport rectangle (what the camera currently shows).
     if (camera) {
       const v = camera.getVisibleRect();
       ctx.strokeStyle = 'rgba(53, 224, 255, 0.35)';
@@ -195,12 +337,9 @@ export class HUD {
       ctx.strokeRect(x + v.x * scale, y + v.y * scale, v.w * scale, v.h * scale);
     }
 
-    // Ship
-    ctx.fillStyle = p.accent;
-    const sx = x + this.ship.x * scale;
-    const sy = y + this.ship.y * scale;
+    ctx.fillStyle = this.ship.alive ? p.accent : p.gaugeCritical;
     ctx.beginPath();
-    ctx.arc(sx, sy, 2.2, 0, Math.PI * 2);
+    ctx.arc(x + this.ship.x * scale, y + this.ship.y * scale, 2.2, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.font = font(8, 700);
@@ -210,30 +349,35 @@ export class HUD {
     ctx.restore();
   }
 
-  _drawDebug(ctx, info, px, py) {
+  _drawDebug(ctx, info, safe) {
     const vp = this.viewport;
-    const safe = vp.safeArea;
     const loop = info.loop;
     const ship = this.ship;
     const p = CONFIG.palette;
+    const s = ship.stats;
+    const systems = info.systems;
 
     const lines = [
       `fps ${loop.fps.toFixed(0)}  step ${(loop.fixedStep * 1000).toFixed(1)}ms x${loop.stepsLastFrame}`,
       `upd ${loop.updateMs.toFixed(2)}ms  rnd ${loop.renderMs.toFixed(2)}ms  parts ${info.particles ? info.particles.liveCount : 0}`,
-      `pos ${ship.x.toFixed(0)},${ship.y.toFixed(0)}  vel ${ship.vx.toFixed(0)},${ship.vy.toFixed(0)} (${(ship.speedValue ?? 0).toFixed(0)} u/s)`,
-      `fwd ${ship.forwardSpeed.toFixed(0)}  lat ${ship.lateralSpeed.toFixed(0)}  thr ${ship.throttle.toFixed(2)}`,
+      `pos ${ship.x.toFixed(0)},${ship.y.toFixed(0)}  v ${ship.speedValue.toFixed(0)} u/s  thr ${ship.throttle.toFixed(2)}`,
+      `accel ${ship.currentAccel.toFixed(0)}/${s.engineThrust} wu/s²  grip ${(ship.grip * ship.modifiers.gripMul).toFixed(2)}`,
+      `weight ${s.weight.toFixed(1)}/${s.maxWeight}  power ${s.power.toFixed(1)}/${s.maxPower}`,
+      `heat ${s.heat.toFixed(1)}/${s.maxHeat} (cool ${s.coolingRate}/s)  corr ${s.coreCorrosion.toFixed(1)}%`,
+      `hull ${s.hull.toFixed(1)}/${s.maxHull}  alive ${ship.alive}  state ${info.state}`,
+      systems ? systems.explain('thrustMul') : '',
+      systems ? systems.explain('maxSpeedMul') : '',
       `cam ${info.camera.x.toFixed(0)},${info.camera.y.toFixed(0)} z${info.camera.zoom.toFixed(3)}`,
-      `${info.input ? info.input.joystick.debugString() : ''}`,
-      `mods ${info.systems ? info.systems.dump() : ''}`,
+      info.input ? info.input.joystick.debugString() : '',
       `view ${vp.width}x${vp.height} @${vp.dpr.toFixed(2)}  safe-b ${safe.bottom}`,
-      '[`] debug  [P] pause  [R] respawn  [1..4] gauges',
+      '[`] debug  [P] pause  [R] restart  [J] jettison  [2] +mass',
     ];
 
     ctx.save();
-    const w = 300;
+    const w = 320;
     const h = lines.length * 12 + 12;
-    const x = vp.width - safe.right - this.margin - w;
-    const y = py + this.minimapSize + this.margin + 8;
+    const x = Math.max(4, vp.width - safe.right - this.margin - w);
+    const y = this.margin + safe.top + this.panelHeight + this.minimapSize + 16;
 
     ctx.fillStyle = 'rgba(2, 6, 14, 0.72)';
     roundRectPath(ctx, x, y, w, h, 8);
@@ -248,12 +392,24 @@ export class HUD {
     ctx.restore();
   }
 
-  /** @param {number} dt seconds (frame delta, used for UI animation only) */
+  /** @param {number} dt seconds (frame delta — UI animation only) */
   update(dt) {
     if (this.hintDismissed) {
       this.hintTimer += dt;
       this.hintAlpha = Math.max(0, 1 - this.hintTimer * 1.6);
     }
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.2);
+  }
+
+  /** Full-screen damage/alert flash, drawn over everything but the overlay. */
+  renderFlash(ctx) {
+    if (this.flash <= 0.01) return;
+    const vp = this.viewport;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(255, 70, 90, ${(this.flash * 0.35).toFixed(3)})`;
+    ctx.fillRect(0, 0, vp.width, vp.height);
+    ctx.restore();
   }
 }
 

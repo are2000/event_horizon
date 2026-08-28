@@ -1,13 +1,14 @@
 /**
  * Ship.js
  * ----------------------------------------------------------------------------
- * The player ship. Phase 1 = movement only, but built so the four planned
- * resource systems (Weight / Heat / Power / Corrosion) can be bolted on
- * without touching this file's physics:
+ * The player ship: flight model + the four core system gauges.
  *
- *   - `ship.resources`  : 0..1 gauges. Systems write to them.
+ *   - `ship.stats`      : capacities (maxWeight, maxPower, maxHeat, maxHull,
+ *                         coolingRate, corrosionRate, engineThrust) and the
+ *                         live values (weight, power, heat, hull,
+ *                         coreCorrosion). Systems read and write these.
  *   - `ship.modifiers`  : aggregate multipliers recomputed EVERY fixed step by
- *     SystemsManager (from resources + installed systems). Physics reads only
+ *     SystemsManager (from stats + installed systems). Physics reads only
  *     these — it never knows *why* it got slower.
  *
  * Physics model (arcade-drifter, framerate independent)
@@ -51,6 +52,46 @@ export function createModifiers() {
 }
 
 export class Ship extends Entity {
+  /**
+   * Fresh stat block. Capacities are ratings that upgrades/meta-progression
+   * can raise; the live values are what the systems push around every step.
+   */
+  static createStats(overrides = {}) {
+    const s = CONFIG.systems;
+    const stats = {
+      /* ---- capacities / ratings ---------------------------------------- */
+      maxWeight: s.maxWeight, // cargo capacity
+      maxPower: s.maxPower, // capacitor size
+      maxHeat: s.maxHeat, // thermal ceiling (the redline)
+      maxHull: s.maxHull, // structural integrity
+      coolingRate: s.coolingRate, // heat units dissipated per second
+      corrosionRate: s.corrosionRate, // corrosion % per second
+      engineThrust: CONFIG.ship.engineThrust, // wu/s² — the raw pull of the drive
+
+      /* ---- live values --------------------------------------------------- */
+      weight: 0, // currently carried mass (0..maxWeight)
+      power: s.maxPower, // charge left in the capacitor (0..maxPower)
+      heat: 0, // 0..maxHeat*heatCeiling (may overshoot the ceiling)
+      hull: s.maxHull, // 0..maxHull
+      coreCorrosion: 0, // 0..100 — 100 = MELTDOWN
+    };
+
+    for (const key in overrides) stats[key] = overrides[key];
+
+    // A fresh (or freshly serviced) ship starts topped up: if the caller
+    // raised a capacity without specifying the live value, fill it to match.
+    if (overrides.power === undefined) stats.power = stats.maxPower;
+    if (overrides.hull === undefined) stats.hull = stats.maxHull;
+
+    // ...and nothing ever starts outside its legal range.
+    stats.power = clamp(stats.power, 0, stats.maxPower);
+    stats.hull = clamp(stats.hull, 0, stats.maxHull);
+    stats.weight = clamp(stats.weight, 0, stats.maxWeight);
+    stats.coreCorrosion = clamp(stats.coreCorrosion, 0, 100);
+    stats.heat = Math.max(0, stats.heat);
+    return stats;
+  }
+
   constructor(opts = {}) {
     super({
       type: 'ship',
@@ -61,7 +102,6 @@ export class Ship extends Entity {
     });
 
     const c = CONFIG.ship;
-    this.baseAccel = opts.baseAccel ?? c.baseAccel; // wu/s²
     this.maxSpeed = opts.maxSpeed ?? c.maxSpeed; // wu/s (tuning target)
     this.softMaxSpeed = opts.softMaxSpeed ?? c.softMaxSpeed; // thrust cutoff
     this.dragCoef = opts.dragCoef ?? c.dragCoef; // quadratic
@@ -72,19 +112,16 @@ export class Ship extends Entity {
 
     this.length = opts.length ?? c.length; // visual only
 
-    /** 0..1 resource gauges — the four planned systems live here. */
-    this.resources = {
-      weight: 0, // cargo/salvage mass: more mass, worse turn, lower top speed
-      heat: 0, // weapon/reactor heat: derates thrust, eventually cooks you
-      power: 1, // available power: thrust, shields, weapons
-      corrosion: 0, // hull decay: eats grip, thrust and top speed
-    };
+    /** Capacities + live gauges. Systems own the numbers, the ship owns the box. */
+    this.stats = Ship.createStats(opts.stats);
 
     /** Recomputed by SystemsManager every fixed step. */
     this.modifiers = createModifiers();
 
     /** Telemetry / FX state. */
     this.throttle = 0; // smoothed 0..1 (for flames, audio, heat)
+    this.currentAccel = 0; // wu/s² the drive can produce right now
+    this.speedValue = 0; // |velocity| in wu/s (cached; HUD + systems read it)
     this.forwardSpeed = 0; // signed, along heading
     this.lateralSpeed = 0; // signed, perpendicular → THE DRIFT VALUE
     this.headingX = Math.cos(this.angle);
@@ -92,6 +129,151 @@ export class Ship extends Entity {
 
     this._exhaustAccum = 0;
     this._hitCooldown = 0;
+  }
+
+  /* =========================================================== gauges ====== */
+  /* Ratios are what the systems, HUD and modifiers all speak in: 0 = empty,
+     1 = at the rated maximum. `heatRatio` can exceed 1 (that is the redline). */
+
+  /** currentWeight / maxWeight — drives acceleration and turn rate. */
+  get weightRatio() {
+    return clamp(this.stats.weight / this.stats.maxWeight, 0, 1);
+  }
+
+  /** heat / maxHeat — > 1 means the core is overheating. */
+  get heatRatio() {
+    return this.stats.heat / this.stats.maxHeat;
+  }
+
+  /** power / maxPower. */
+  get powerRatio() {
+    return clamp(this.stats.power / this.stats.maxPower, 0, 1);
+  }
+
+  /** hull / maxHull. */
+  get hullRatio() {
+    return clamp(this.stats.hull / this.stats.maxHull, 0, 1);
+  }
+
+  /** coreCorrosion / 100 — 1 is a meltdown. */
+  get corrosionRatio() {
+    return clamp(this.stats.coreCorrosion / 100, 0, 1);
+  }
+
+  /** How far into the redline band (maxHeat -> maxHeat*ceiling) we are, 0..1. */
+  get overheatSeverity() {
+    const ceiling = CONFIG.systems.heatCeiling;
+    return clamp((this.heatRatio - 1) / Math.max(0.0001, ceiling - 1), 0, 1);
+  }
+
+  get isOverheating() {
+    return this.stats.heat > this.stats.maxHeat;
+  }
+
+  get isOverloaded() {
+    return this.weightRatio >= 0.999;
+  }
+
+  /* ====================================================== resource API ===== */
+  /* Systems (and later: weapons, boosters, shields) move the gauges through
+     these four methods so every write is clamped in exactly one place. */
+
+  /**
+   * PLACEHOLDER CONSUMER: draw power from the capacitor.
+   * Returns the amount actually delivered — a partial result means brownout,
+   * and the caller decides how to degrade (the drive just gets weaker).
+   *
+   * @param {number} amount units of power requested
+   * @returns {number} units actually delivered
+   */
+  consumePower(amount) {
+    if (amount <= 0) return 0;
+    const delivered = Math.min(amount, this.stats.power);
+    this.stats.power = clamp(this.stats.power - delivered, 0, this.stats.maxPower);
+    return delivered;
+  }
+
+  /** PLACEHOLDER GENERATOR: dump heat into the core (weapons, drive, boosts). */
+  generateHeat(amount) {
+    if (amount <= 0) return 0;
+    const ceiling = this.stats.maxHeat * CONFIG.systems.heatCeiling;
+    const before = this.stats.heat;
+    this.stats.heat = clamp(this.stats.heat + amount, 0, ceiling);
+    return this.stats.heat - before;
+  }
+
+  /** Restore charge in the capacitor (solar trim, docking, pickups). */
+  restorePower(amount) {
+    this.stats.power = clamp(this.stats.power + amount, 0, this.stats.maxPower);
+    return this.stats.power;
+  }
+
+  /** Load cargo/salvage. Returns the amount that actually fit. */
+  addWeight(amount) {
+    const before = this.stats.weight;
+    this.stats.weight = clamp(this.stats.weight + amount, 0, this.stats.maxWeight);
+    return this.stats.weight - before;
+  }
+
+  /**
+   * Dump cargo to get acceleration back.
+   * @param {number} [amount] omit to jettison everything
+   */
+  jettisonCargo(amount) {
+    const drop = amount === undefined ? this.stats.weight : Math.min(amount, this.stats.weight);
+    this.stats.weight = clamp(this.stats.weight - drop, 0, this.stats.maxWeight);
+    return drop;
+  }
+
+  /** Apply hull damage. Returns the new hull value. */
+  damage(amount) {
+    if (amount <= 0 || !this.alive) return this.stats.hull;
+    this.stats.hull = clamp(this.stats.hull - amount, 0, this.stats.maxHull);
+    if (this.stats.hull <= 0) this.alive = false; // HullSystem emits 'ship:destroyed'
+    return this.stats.hull;
+  }
+
+  repair(amount) {
+    this.stats.hull = clamp(this.stats.hull + amount, 0, this.stats.maxHull);
+    if (this.stats.hull > 0) this.alive = true;
+    return this.stats.hull;
+  }
+
+  /** Scrub corrosion off the core (repair bay, consumable, meta upgrade). */
+  cleanCorrosion(amount) {
+    this.stats.coreCorrosion = clamp(this.stats.coreCorrosion - amount, 0, 100);
+    return this.stats.coreCorrosion;
+  }
+
+  /**
+   * Back to factory fresh — used by Game.restart(). Systems are reset
+   * separately through SystemsManager.reset().
+   */
+  reset(x = this.x, y = this.y, angle = -Math.PI / 2) {
+    const upgrades = {
+      // Ratings bought in the meta layer survive a restart; gauges do not.
+      maxWeight: this.stats.maxWeight,
+      maxPower: this.stats.maxPower,
+      maxHeat: this.stats.maxHeat,
+      maxHull: this.stats.maxHull,
+      coolingRate: this.stats.coolingRate,
+      corrosionRate: this.stats.corrosionRate,
+      engineThrust: this.stats.engineThrust,
+    };
+    this.stats = Ship.createStats(upgrades);
+    for (const key in this.modifiers) this.modifiers[key] = 1;
+    this.teleport(x, y, angle);
+    this.vx = 0;
+    this.vy = 0;
+    this.throttle = 0;
+    this.forwardSpeed = 0;
+    this.lateralSpeed = 0;
+    this.speedValue = 0;
+    this.alive = true;
+    this.visible = true;
+    this._hitCooldown = 0;
+    this._exhaustAccum = 0;
+    return this;
   }
 
   /* ------------------------------------------------------------------ tick -- */
@@ -102,6 +284,7 @@ export class Ship extends Entity {
    */
   update(dt, ctx) {
     this.savePrevious();
+    this.age += dt;
 
     const input = ctx.input ? ctx.input.axis : ZERO;
     const rawThrottle = clamp(length(input.x, input.y), 0, 1);
@@ -124,16 +307,23 @@ export class Ship extends Entity {
     this.headingY = sin;
 
     /* 2. THRUST (along heading, with speed falloff) ------------------------ */
+    //   Actual Acceleration = EngineThrust * (1 - weight/maxWeight) * modifiers
+    // The load term lives in WeightSystem (so cargo, salvage and upgrades all
+    // flow through the same modifier pipeline as power/heat/corrosion), and
+    // `engineThrust` is the ship's rated pull in wu/s².
+    //
     // Instead of clamping the speed (which feels like hitting a wall) the
-    // drive naturally loses authority as it approaches its rated maximum:
-    //   thrust(v) = baseAccel * throttle * (1 - (v / softMax)²)
+    // drive also loses authority as it approaches its rated maximum:
+    //   thrust(v) = accel * throttle * (1 - (v / softMax)²)
     // Result: brisk acceleration, a smooth asymptote to top speed, and — because
     // real drag stays low — a long glide once the stick is released.
     const speedMul = this.modifiers.maxSpeedMul;
     const softMax = this.softMaxSpeed * speedMul;
     const vNow = length(this.vx, this.vy);
     const falloff = vNow < softMax ? 1 - (vNow / softMax) * (vNow / softMax) : 0;
-    const accel = this.baseAccel * this.modifiers.thrustMul * rawThrottle * falloff;
+    const accel = this.stats.engineThrust * this.modifiers.thrustMul * rawThrottle * falloff;
+    // Exposed for the HUD / debug overlay: wu/s² the drive is producing now.
+    this.currentAccel = this.stats.engineThrust * this.modifiers.thrustMul;
     if (accel > 0) {
       this.vx += cos * accel * dt;
       this.vy += sin * accel * dt;
@@ -400,6 +590,19 @@ export class Ship extends Entity {
 
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
+    }
+
+    /* --- overheat glow (the core is cooking) ------------------------------ */
+    if (this.isOverheating) {
+      const sev = 0.35 + this.overheatSeverity * 0.65;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = sev * (0.5 + 0.5 * Math.abs(Math.sin(this.age * 9)));
+      ctx.fillStyle = CONFIG.palette.gaugeCritical;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius * 1.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
     /* --- hull (placeholder: arrowhead) ----------------------------------- */

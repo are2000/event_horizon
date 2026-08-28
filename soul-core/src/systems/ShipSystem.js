@@ -3,33 +3,28 @@
  * ----------------------------------------------------------------------------
  * Base class for every ship-mounted system.
  *
- * THIS IS THE EXTENSION SEAM for the four planned systems:
- *
- *   class ReactorSystem extends ShipSystem {
- *     static id = 'reactor';
- *     update(dt, ship) {
- *       // draw power from the capacitor, dump heat into the hull...
- *       ship.resources.power = clamp(ship.resources.power - this.draw * dt, 0, 1);
- *       ship.resources.heat  = clamp(ship.resources.heat  + this.heat  * dt, 0, 1);
- *     }
- *     apply(modifiers, ship) {
- *       // ...and translate that state into physics modifiers
- *       modifiers.thrustMul *= 0.35 + 0.65 * ship.resources.power;
- *     }
- *   }
- *
  * Contract
- *  - `update(dt, ship)`  : mutate RESOURCES (simulation). Runs every fixed step.
- *  - `apply(modifiers, ship)` : mutate the MODIFIERS object (read-only ship).
- *  - never touch Ship physics directly — that is what keeps systems composable
- *    and lets us stack/unstack mods (salvaged parts, run upgrades, debuffs).
+ *  - `update(dt, ship)`       : move the GAUGES (simulation). Every fixed step.
+ *  - `apply(modifiers, ship)` : multiply into the MODIFIERS object (read-only ship).
+ *  - `reset()`                : clear per-run state (Game.restart() calls it).
+ *  - never touch Ship physics directly — that is what lets five systems
+ *    influence the same stat without knowing about each other, and it is what
+ *    makes "why is my ship slow?" answerable from the debug overlay.
+ *
+ * A system reaches everything it needs through `this.ship` and
+ * `this.manager` (set by SystemsManager on install):
+ *   this.manager.events.emit('cargo:overflow', {...})
+ *   this.manager.events.on('ship:impact', ...)
+ *
+ * The five live systems are: WeightSystem, DriveSystem, PowerSystem,
+ * HeatSystem, CorrosionSystem, HullSystem.
  */
 export class ShipSystem {
   /** Unique registry key. Subclasses should override. */
   static id = 'system';
 
   /**
-   * @param {object} [config] per-instance tuning (capacity, rates, tier...)
+   * @param {object} [config] per-instance tuning (rates, tier, capacity...)
    */
   constructor(config = {}) {
     this.id = config.id ?? this.constructor.id ?? 'system';
@@ -38,10 +33,15 @@ export class ShipSystem {
     this.config = config;
     /** @type {import('../entities/Ship.js').Ship|null} */
     this.ship = null;
+    /** @type {import('./SystemsManager.js').SystemsManager|null} */
+    this.manager = null;
     this.age = 0;
   }
 
-  /** Called by SystemsManager when installed. Override to cache state. */
+  /**
+   * Called by SystemsManager when installed.
+   * @param {import('../entities/Ship.js').Ship} ship
+   */
   attach(ship) {
     this.ship = ship;
     this.onAttach(ship);
@@ -53,6 +53,11 @@ export class ShipSystem {
     this.onDetach(ship);
     this.ship = null;
     return this;
+  }
+
+  /** Shortcut to the shared event bus (null if the system isn't installed). */
+  get events() {
+    return this.manager ? this.manager.events : null;
   }
 
   /* --- hooks (optional) ---------------------------------------------------- */
@@ -70,6 +75,9 @@ export class ShipSystem {
    * @param {import('../entities/Ship.js').Ship} ship
    */
   apply(modifiers, ship) {}
+
+  /** Called by SystemsManager.reset() when a new run starts. */
+  reset() {}
 }
 
 export default ShipSystem;

@@ -67,8 +67,10 @@ export const CONFIG = {
     radius: 20, // collision radius (wu)
     length: 54, // visual length (wu)
 
-    // Thrust is an acceleration so mass/weight can scale it later.
-    baseAccel: 1900, // wu/s² at full stick, no modifiers, at rest
+    // ENGINE THRUST (wu/s²) — the "Engine Thrust" term in the load formula:
+    //   Actual Acceleration = EngineThrust * (1 - currentWeight / maxWeight)
+    // Everything else (power, heat, corrosion) multiplies on top of it.
+    engineThrust: 2100,
 
     // TOP SPEED is enforced by thrust falloff, NOT by heavy drag. That is what
     // buys us a long, space-y glide: the ship is limited while accelerating,
@@ -78,9 +80,9 @@ export const CONFIG = {
     coastTerminal: 1600, // wu/s — theoretical terminal speed of drag alone
     linearDrag: 0.22, // 1/s — gentle always-on friction
     // Quadratic drag coefficient is derived so that drag alone would only stop
-    // accelerating at `coastTerminal`:   dragCoef = baseAccel / coastTerminal²
+    // accelerating at `coastTerminal`:  dragCoef = engineThrust / coastTerminal²
     get dragCoef() {
-      return this.baseAccel / (this.coastTerminal * this.coastTerminal);
+      return this.engineThrust / (this.coastTerminal * this.coastTerminal);
     },
     grip: 1.8, // 1/s — how fast sideways velocity is scrubbed (LOW = drifty)
     turnRate: 7.0, // rad/s — how fast the hull rotates toward the stick
@@ -105,29 +107,57 @@ export const CONFIG = {
 
   /* ----------------------------------------------------------------- hud -- */
   hud: {
-    margin: 14,
-    barHeight: 9,
-    barGap: 7,
-    labelWidth: 58,
-    minBarWidth: 96,
-    maxBarWidth: 176,
-    barFraction: 0.3, // of viewport width
+    margin: 14, // px from the screen edge (plus safe-area insets)
+    maxPanelWidth: 420, // the four-gauge panel never gets wider than this
+    barHeight: 13,
+    barGap: 6,
+    labelWidth: 66, // "CORROSION" is the longest label
+    valueWidth: 54, // "100/100" readout column
+    minimapFraction: 0.24, // of viewport width
   },
 
   /* -------------------------------------------------------------- systems -- */
-  // Phase-1 placeholder dynamics for the four planned resource systems.
-  // Real numbers will come from the systems themselves (engines draw power,
-  // generate heat, corrode the hull...). These just keep the pipeline alive.
+  // The four core systems: HULL (green) · POWER (cyan) · HEAT (orange) ·
+  // CORROSION (purple) — plus WEIGHT, which is the mass the other four
+  // have to carry. Every number the systems read lives here.
   systems: {
-    heatCooling: 0.12, // heat units per second, passive radiator
-    powerRegen: 0.22, // power units per second back to full
-    heatThrottleThreshold: 0.75, // above this, thrust is derated
-    heatThrottlePenalty: 0.35, // ...by this fraction at heat == 1
-    weightMassFactor: 1.6, // mass multiplier at weight == 1
-    corrosionGripPenalty: 0.4, // grip loss at corrosion == 1
-    corrosionThrustPenalty: 0.25,
-    weightSpeedPenalty: 0.25,
-    corrosionSpeedPenalty: 0.15,
+    /* --- HULL ------------------------------------------------------------ */
+    maxHull: 100,
+    impactDamage: 42, // hull lost on a full-strength impact
+    impactDamageMinSpeed: 110, // wu/s — below this, bumps are harmless
+    thermalDamagePerSecond: 3, // hull burned while the core is over maxHeat
+
+    /* --- POWER (capacitor) ----------------------------------------------- */
+    maxPower: 100,
+    powerRegen: 13, // units/s recharged
+    overheatRegenPenalty: 0.5, // recharge multiplier while overheating
+    drivePowerDraw: 20, // units/s at full throttle (placeholder consumer)
+    brownoutThrust: 0.25, // thrust multiplier with a completely empty capacitor
+
+    /* --- HEAT ------------------------------------------------------------- */
+    maxHeat: 100, // thermal ceiling
+    coolingRate: 11, // units/s dissipated — the `coolingRate` stat
+    driveHeatGain: 16, // units/s generated at full throttle
+    heatCeiling: 2.0, // heat may overshoot to 2x maxHeat (the redline band)
+    overheatThrustPenalty: 0.55, // at the top of the redline band
+    overheatTurnPenalty: 0.35,
+    overheatSpeedPenalty: 0.3,
+
+    /* --- WEIGHT ----------------------------------------------------------- */
+    maxWeight: 100,
+    // The spec formula is `accel = engineThrust * (1 - weight / maxWeight)`.
+    // At 100% load that is ZERO thrust — brutal but intentional: cargo
+    // management is supposed to matter. Raise these floors to soften it
+    // (e.g. 0.15 => an overloaded ship always keeps 15% thrust).
+    minThrustFactor: 0,
+    minTurnFactor: 0,
+
+    /* --- CORROSION --------------------------------------------------------- */
+    corrosionRate: 0.35, // % per second (~4m45s from fresh to meltdown)
+    corrosionHeatMultiplier: 3, // corrosion accelerates while overheating
+    corrosionGripPenalty: 0.45, // a decayed hull slides more
+    corrosionSpeedPenalty: 0.2,
+    meltdownWarning: 0.8, // HUD starts screaming at 80%
   },
 
   /* --------------------------------------------------------------- debug -- */
@@ -142,17 +172,22 @@ export const CONFIG = {
     grid: 'rgba(96, 132, 200, 0.07)',
     gridMajor: 'rgba(96, 140, 220, 0.15)',
     bounds: '#ff4d6d',
-    hull: '#d7e6ff',
+    hull: '#d7e6ff', // ship plating (not the hull GAUGE)
     hullDark: '#7f9dcb',
     accent: '#35e0ff',
     thrust: '#ff7a2f',
     thrustCore: '#ffe6a8',
     asteroid: '#39404d',
     asteroidEdge: '#5d6a7d',
-    weight: '#8bd450',
-    heat: '#ff7a3c',
-    power: '#ffd93d',
-    corrosion: '#a86bff',
+
+    // The four HUD gauges (requested colours).
+    gaugeHull: '#4ade80', // green
+    gaugePower: '#22d3ee', // cyan
+    gaugeHeat: '#ff8a3c', // orange
+    gaugeCorrosion: '#a855f7', // purple
+    gaugeCritical: '#ff3b5c', // redline / danger
+
+    weight: '#8bd450', // mass readout
     text: '#cfe0ff',
     textDim: 'rgba(207, 224, 255, 0.5)',
     barBg: 'rgba(255, 255, 255, 0.08)',

@@ -7,11 +7,10 @@
  *   ?debug=1         enable the debug overlay from the start
  *   ?seed=12345      generate a specific sector
  *   ?rocks=200       asteroid count
- *   ?heat=1          install the example ThrusterHeatSystem (see systems/)
+ *   ?corrosion=2     corrosion %/s (default 0.35) — use 0 for a sandbox run
  */
 import { CONFIG } from './config.js';
 import { Game } from './core/Game.js';
-import { ThrusterHeatSystem } from './systems/ThrusterHeatSystem.js';
 
 function readOptions() {
   const params = new URLSearchParams(window.location.search);
@@ -22,13 +21,15 @@ function readOptions() {
     return Number.isFinite(v) ? v : fallback;
   };
 
+  const corrosionRate = num('corrosion', CONFIG.systems.corrosionRate);
+
   return {
     debug: params.has('debug') && params.get('debug') !== '0',
     worldOpts: {
       seed: num('seed', CONFIG.world.seed),
       obstacleCount: num('rocks', CONFIG.world.obstacleCount),
     },
-    installExampleHeat: params.has('heat') && params.get('heat') !== '0',
+    corrosionRate,
   };
 }
 
@@ -38,22 +39,23 @@ function boot() {
 
   const opts = readOptions();
   const game = new Game(canvas, opts);
-
-  // Example system — the pattern every future system will follow.
-  // Opt-in for now so Phase 1 stays a pure flight prototype.
-  if (opts.installExampleHeat) {
-    game.systems.install(new ThrusterHeatSystem({ heatPerSecond: 0.22 }));
-  }
-
   game.init();
 
+  // Optional URL override for the run timer (?corrosion=0 => free flight).
+  if (opts.corrosionRate !== CONFIG.systems.corrosionRate) {
+    game.ship.stats.corrosionRate = opts.corrosionRate;
+  }
+
   // Debug handle: poke at the running game from devtools.
-  //   SoulCore.ship.resources.heat = 1
-  //   SoulCore.systems.install(new MySystem())
+  //   SoulCore.status()
+  //   SoulCore.core.weight.addCargo(40)      -> watch acceleration die
+  //   SoulCore.ship.generateHeat(120)        -> overheat penalties
+  //   SoulCore.ship.consumePower(100)        -> brownout
+  //   SoulCore.ship.stats.coreCorrosion = 99 -> meltdown next tick
   window.SoulCore = game;
 
   console.info(
-    '%cSoul Core: The Great Decay%c phase 1 ready — %dx%d @%s',
+    '%cSoul Core: The Great Decay%c phase 2 ready — %dx%d @%s',
     'color:#35e0ff;font-weight:bold',
     'color:#cfe0ff',
     game.viewport.width,
