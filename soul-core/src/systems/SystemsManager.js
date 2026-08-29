@@ -41,6 +41,14 @@ export class SystemsManager {
 
     /** Live aggregate multipliers handed to Ship each step. */
     this.modifiers = createModifiers();
+
+    /**
+     * Shared per-step context for systems that need more than the ship:
+     * Game fills this with { world, particles, camera, events, targeting,
+     * enemies, time } and keeps it up to date (including across restarts).
+     * Systems read `this.manager.context` instead of reaching for globals.
+     */
+    this.context = null;
   }
 
   /**

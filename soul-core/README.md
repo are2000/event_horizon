@@ -1,4 +1,4 @@
-# Soul Core: The Great Decay — Phase 2 (Core Systems)
+# Soul Core: The Great Decay — Phase 3 (Modular Weapons & Auto-Targeting)
 
 A top-down **roguelite space survival** game for **mobile portrait**, built with
 **vanilla JavaScript (ES6 classes) + HTML5 Canvas + CSS**. No frameworks, no
@@ -120,8 +120,9 @@ soul-core/
 ├── package.json                No deps. `npm start` / `npm test` conveniences
 ├── tools/                      Headless test suites (zero dependencies)
 │   ├── sim.test.js             Physics, weight, power, heat, corrosion, hull
-│   ├── boot.test.js            Real Game vs stubbed DOM: input, HUD, game over
-│   └── (see §7)
+│   ├── combat.test.js          Mounts, arc maths, targeting, lasers, dummies
+│   ├── boot.test.js            Real Game vs stubbed DOM: input, HUD, combat, game over
+│   └── (see §8)
 └── src/
     ├── main.js                 Entry point, URL params, debug handle
     ├── config.js               EVERY tunable number lives here
@@ -135,7 +136,13 @@ soul-core/
     │   └── MathUtils.js        clamp, damp, angles, seeded RNG, canvas helpers
     ├── entities/
     │   ├── Entity.js           Base: transform, prev-transform, interpolation
-    │   └── Ship.js             Flight model + stats + ratio getters + resource API
+    │   ├── Ship.js             Flight model + stats + ratio getters + resource API
+    │   └── Enemy.js            Dummy target + seeded field spawner
+    ├── combat/
+    │   ├── WeaponMount.js      Hardpoint: local offset, arc constraint, rotation
+    │   ├── Weapon.js           Base class for anything bolted to a mount
+    │   ├── LaserWeapon.js      Continuous beam: power + heat + dps + beam FX
+    │   └── TargetingManager.js Arc/range aware target selection
     ├── world/
     │   └── World.js            Seeded sector: grid, parallax stars, asteroids
     ├── fx/
@@ -148,10 +155,11 @@ soul-core/
     │   ├── PowerSystem.js      Capacitor recharge
     │   ├── HeatSystem.js       Cooling + overheat movement penalties
     │   ├── CorrosionSystem.js  The run timer; emits 'ship:meltdown'
-    │   └── HullSystem.js       All damage intake; emits 'ship:destroyed'
+    │   ├── HullSystem.js       All damage intake; emits 'ship:destroyed'
+    │   └── WeaponSystem.js     Owns the mounts; drives them each fixed step
     └── ui/
         ├── VirtualJoystick.js  Canvas-drawn stick, multi-touch safe
-        └── HUD.js              The four gauge bars + minimap + debug overlay
+        └── HUD.js              The four gauge bars + GUNS row + minimap + debug
 ```
 
 ---
@@ -185,6 +193,122 @@ thrustMul 0.17 = weight 0.60 x drive 0.50 x heat 0.59
 `Ship` knows only *"I hit something at speed X"* and emits `ship:impact`.
 `HullSystem` subscribes and decides what that costs. Adding shields, armour or
 a "cargo bay destroyed" mod later means adding a listener, not editing Ship.
+
+---
+
+## 6. Weapons & auto-targeting
+
+The hull and its guns are independent entities: a mount is bolted to the ship
+and owns *where it can point*; a weapon is bolted to a mount and owns *what it
+costs*. Neither knows about the other's internals.
+
+```
+TargetingManager ──► WeaponMount (traverse arc + rate-limited rotation)
+                          └──► Weapon (power draw, heat, damage, beam FX)
+```
+
+### Hardpoints (`CONFIG.combat.mounts`)
+
+| Mount  | Offset (local wu) | Arc (degrees, hull-relative) | Coverage |
+| ------ | ----------------- | ---------------------------- | -------- |
+| **Left**  | `(6, -15)`  | `-90 … +30`  | port beam round to 30° starboard |
+| **Right** | `(6, +15)`  | `-30 … +90`  | 30° port round to the starboard beam |
+| **Rear**  | `(-20, 0)`  | `180 ± 90`   | the whole back hemisphere |
+
+Local frame: `+x` = nose, `+y` = starboard. The two front arcs overlap ahead
+(`-30…+30`) so both can converge on a target in front; the rear arc completes
+the circle.
+
+### The arc maths
+
+Arcs are stored as **centre ± half-width**, not min/max, which is what makes
+the rear arc — centred on 180°, straddling the ±180° seam — work with the exact
+same four lines of code as the side mounts:
+
+```js
+// where the mount WANTS to point, in the hull's frame
+desiredLocal = wrap(atan2(target - muzzle) - shipAngle);
+
+// nearest legal angle: clamp the offset from the arc centre, the short way round
+clamped = centre + clamp(wrap(desiredLocal - centre), -half, +half);
+
+// rate-limited approach (never instant), then a numerical safety clamp
+localAngle = rotateToward(localAngle, clamped, turnRate * dt);
+localAngle = centre + clamp(wrap(localAngle - centre), -half, +half);
+```
+
+Two details that matter:
+
+* **Aiming error is measured against the *unsaturated* desire.** The turret
+  parks on the arc limit, but the beam may not bend — so a target outside the
+  arc leaves a permanent `aimError` and the weapon stays cold. Verified over a
+  full circle sweep: `clampToArc` never returns an out-of-arc angle.
+* **Out-of-arc enemies are never locked at all.** Targeting only ever offers a
+  mount enemies it can legally face, so with nothing in arc the turret simply
+  rests at its arc centre instead of straining at the limit.
+
+### Auto-targeting (`TargetingManager`)
+
+Per mount, per scan: nearest **legal** enemy — alive, inside weapon range, and
+inside the mount's world-space arc. Dead enemies are skipped; a lock is dropped
+the instant it becomes illegal (killed, out of range, or swung out of arc as
+the hull turns).
+
+* `shareTargets: false` — each mount claims its own target, so three guns cover
+  three threats instead of lasering the same dummy. Falls back to sharing when
+  there aren't enough to go round.
+* `retargetDelay` (0.25 s) — re-scanning every step makes mounts flicker
+  between equidistant targets.
+* `mode` — `'nearest'` (default), `'weakest'`, `'strongest'`.
+
+### Laser (`LaserWeapon`)
+
+A continuous beam: while it is up it drains the capacitor and heats the core
+*every step*, and applies `dps * dt` to the target.
+
+| Stat | Value | Note |
+| ---- | ----- | ---- |
+| `range` | 520 wu | |
+| `dps` | 34 | ~1.8 s to cut a 60-hull dummy |
+| `powerDraw` | 7 /s | one beam is cheaper than the 13/s recharge… |
+| `heatGain` | 13 /s | …but hotter than the 11/s radiators |
+| `fireTolerance` | 0.09 rad (~5°) | must be aimed this well to fire |
+| `spinUpTime` | 0.15 s | beam fades in/out instead of snapping |
+
+So: **one beam is sustainable, two are break-even, three redline the core in
+about four seconds.** When the capacitor can't keep up the beam doesn't cut
+out — it weakens (damage scales with the fraction of power actually
+delivered), which reads as the laser stuttering under load.
+
+### Dummy enemies
+
+`Enemy` is a full Entity (transform, radius, hull, damage events) that happens
+to sit still — hunters and drones of Phase 4 subclass it rather than replace
+the combat pipeline. `Enemy.spawnField()` scatters 26 of them: 45% in a ring
+around the drop point (instant target practice), the rest across the sector,
+never inside an asteroid or on the spawn point. They respawn 6 s after dying so
+the range never runs dry.
+
+### Adding a weapon
+
+```js
+// src/combat/PlasmaCannon.js
+export class PlasmaCannon extends Weapon {
+  static id = 'plasma';
+  update(dt, ctx) {
+    if (this.cooldown > 0) { this.cooldown -= dt; return; }
+    const got = ctx.ship.consumePower(18);          // capacitor pays
+    ctx.ship.generateHeat(24);                       // core pays
+    ctx.particles.burst(6, { x: ctx.mount.muzzleX, ... });
+    this.cooldown = 0.6;
+  }
+}
+// register it in WeaponSystem's WEAPON_TYPES, then set
+// weaponType: 'plasma' on any mount in CONFIG.combat.mounts.
+```
+
+New hardpoints are pure config: add an entry to `CONFIG.combat.mounts` with an
+offset, an arc and a `weaponType`.
 
 ### Layering
 ```
@@ -237,9 +361,10 @@ update(dt, ship) {
 No dependencies, no build step — just Node:
 
 ```bash
-node tools/sim.test.js    # 58 checks: physics, weight, power, heat, corrosion, hull
-node tools/boot.test.js   # 57 checks: real Game booted vs stubbed DOM + 2D context
-npm test                  # both
+node tools/sim.test.js     # 58 checks: physics, weight, power, heat, corrosion, hull
+node tools/combat.test.js  # 56 checks: mounts, arc maths, targeting, lasers, dummies
+node tools/boot.test.js    # 71 checks: real Game booted vs stubbed DOM + 2D context
+npm test                   # all three (185+ checks)
 ```
 
 `boot.test.js` fakes `window`/`document`/canvas, then fires **synthetic pointer
@@ -254,6 +379,15 @@ Coverage highlights:
 * corrosion rate, heat multiplier, single-shot meltdown, warning threshold
 * impacts damage the hull, gentle bumps don't, redlining burns it, 0 = destroyed
 * restart regenerates the sector and restores every gauge
+* arc clamping at every bearing — including the rear mount's ±180° seam
+* rate-limited rotation (one step moves at most `turnRate × dt`)
+* out-of-arc enemies are never locked and never fired at; locks drop when the
+  hull turns them out of arc
+* one mount per target, convergence on a lone target, range and dead-enemy rules
+* laser DPS, power draw, heat, starvation, and damage/draw/heat being
+  identical at 240/120/60 Hz
+* in the real Game: dummies spawn, mounts auto-fire, kills are counted, and the
+  beam is drawn as an additive stroke in the laser colour
 
 ---
 
@@ -267,9 +401,15 @@ Coverage highlights:
 | Corrosion grows over time, meltdown at 100% → game over            | ✅ `CorrosionSystem` + game-over state |
 | Top HUD: 4 horizontal bars — Hull green, Power cyan, Heat orange, Corrosion purple | ✅ canvas `HUD` |
 | Ship + game loop integration                                       | ✅ `SystemsManager` runs every fixed step |
+| 3 hardpoints (left / right / rear)                                  | ✅ `WeaponMount` + `CONFIG.combat.mounts` |
+| Left `-90…+30`, right `-30…+90` arc restrictions                    | ✅ verified at every bearing |
+| Weapons rotate gradually, never instantly                           | ✅ `rotateToward` at `turnRate` rad/s |
+| Auto-targeting manager picks the closest valid enemy                | ✅ `TargetingManager` |
+| Stationary dummy enemies                                            | ✅ `Enemy` + seeded `spawnField()` |
+| Continuous laser beam that consumes power and generates heat        | ✅ `LaserWeapon` |
 
-### Next up (Phase 3 candidates)
-Salvage pickups → Weight · weapons (second `consumePower`/`generateHeat`
-consumer) · enemies · coolant cells & repair pickups · meta upgrades that raise
-the `max*` ratings (already preserved across `restart()`) · audio · real sprite
-atlas behind the palette in `config.js`.
+### Next up (Phase 4 candidates)
+Mobile enemies (chase/strafe AI by subclassing `Enemy`) · projectile weapons
+through the same `Weapon` base · salvage drops → Weight · repair/coolant
+pickups · shield module · meta upgrades that raise the `max*` ratings and swap
+`weaponType` on a mount · audio · real sprite atlas behind the palette.

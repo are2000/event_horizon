@@ -160,6 +160,57 @@ export const CONFIG = {
     meltdownWarning: 0.8, // HUD starts screaming at 80%
   },
 
+  /* -------------------------------------------------------------- combat -- */
+  // Modular weapons: mounts own WHERE a gun points, weapons own WHAT it costs.
+  combat: {
+    /* --- dummy targets ----------------------------------------------------- */
+    enemies: {
+      count: 26,
+      radius: 26,
+      hull: 60,
+      minDistanceFromSpawn: 700, // no target on top of the player at spawn
+      respawnDelay: 6, // seconds; 0 = stays dead
+    },
+
+    /* --- auto targeting ---------------------------------------------------- */
+    targeting: {
+      range: 620, // default scan radius when a weapon doesn't say
+      mode: 'nearest', // 'nearest' | 'weakest' | 'strongest'
+      retargetDelay: 0.25, // seconds between re-scans (stops target flicker)
+      shareTargets: false, // false = each mount prefers its own target
+    },
+
+    /* --- hardpoints --------------------------------------------------------- */
+    // offsets are in the ship's LOCAL frame: +x = nose, +y = starboard.
+    // arcs are DEGREES relative to the hull: 0 = straight ahead.
+    mounts: [
+      // Forward-LEFT: from the port beam (-90°) round to 30° starboard.
+      { id: 'left', label: 'L', offset: { x: 6, y: -15 }, arc: { center: -30, half: 60 }, turnRate: 3.6, weaponType: 'laser' },
+      // Forward-RIGHT: from 30° port round to the starboard beam (+90°).
+      { id: 'right', label: 'R', offset: { x: 6, y: 15 }, arc: { center: 30, half: 60 }, turnRate: 3.6, weaponType: 'laser' },
+      // REAR: 180° ± 90° — the whole back hemisphere, complementing the pair
+      // up front. Centre/half-width form handles the ±180° seam for free.
+      { id: 'rear', label: 'B', offset: { x: -20, y: 0 }, arc: { center: 180, half: 90 }, turnRate: 3.0, weaponType: 'laser' },
+    ],
+
+    /* --- weapons ------------------------------------------------------------ */
+    laser: {
+      name: 'Laser',
+      range: 520, // wu
+      dps: 34, // hull damage per second at full power
+      powerDraw: 7, // capacitor units/s while the beam is up
+      // One beam (13/s) barely out-paces the radiators (11/s); a full
+      // three-mount broadside (39/s) redlines the core in a few seconds.
+      heatGain: 13, // heat units/s while the beam is up
+      spinUpTime: 0.15, // seconds to reach full brightness
+      fireTolerance: 0.09, // rad (~5°) — must be aimed this well to fire
+      minDuty: 0.12, // below this fraction of requested power the beam drops
+      width: 3.2, // wu
+      color: '#7cf9ff',
+      coreColor: '#ffffff',
+    },
+  },
+
   /* --------------------------------------------------------------- debug -- */
   // Enable via `?debug=1` in the URL or by pressing D at runtime.
   debug: false,

@@ -22,6 +22,7 @@
  */
 import { CONFIG } from '../config.js';
 import { Ship } from '../entities/Ship.js';
+import { Enemy } from '../entities/Enemy.js';
 import { ParticleSystem } from '../fx/ParticleSystem.js';
 import { SystemsManager } from '../systems/SystemsManager.js';
 import { WeightSystem } from '../systems/WeightSystem.js';
@@ -30,6 +31,8 @@ import { PowerSystem } from '../systems/PowerSystem.js';
 import { HeatSystem } from '../systems/HeatSystem.js';
 import { CorrosionSystem } from '../systems/CorrosionSystem.js';
 import { HullSystem } from '../systems/HullSystem.js';
+import { WeaponSystem } from '../systems/WeaponSystem.js';
+import { TargetingManager } from '../combat/TargetingManager.js';
 import { HUD } from '../ui/HUD.js';
 import { VirtualJoystick } from '../ui/VirtualJoystick.js';
 import { World } from '../world/World.js';
@@ -44,12 +47,13 @@ import { clamp, font, TAU } from './MathUtils.js';
  * Install order == update order for the core systems:
  *   weight     — load factor (read by physics the same step)
  *   drive      — the placeholder consumer: draws power, generates heat
+ *   weapons    — mounts rotate, then draw power / dump heat while firing
  *   power      — capacitor recharge
  *   heat       — cooling + overheat penalties
  *   corrosion  — the run timer; emits 'ship:meltdown' at 100%
  *   hull       — damage intake; emits 'ship:destroyed' at 0
  */
-const CORE_SYSTEM_ORDER = ['weight', 'drive', 'power', 'heat', 'corrosion', 'hull'];
+const CORE_SYSTEM_ORDER = ['weight', 'drive', 'weapons', 'power', 'heat', 'corrosion', 'hull'];
 
 export class Game {
   /**
@@ -74,20 +78,39 @@ export class Game {
     this.particles = new ParticleSystem(opts.particleCapacity ?? 512);
     this.systems = new SystemsManager(this.ship, this.events);
 
-    /* The five core systems (Weight / Power / Heat / Corrosion / Hull) plus
-       the drive that consumes power and generates heat. Handy from devtools:
-       SoulCore.core.weight.addCargo(40) */
+    /* The core systems (Weight / Power / Heat / Corrosion / Hull), the drive
+       that consumes power and generates heat, and the weapon mounts.
+       Handy from devtools: SoulCore.core.weight.addCargo(40) */
     this.core = {
       weight: new WeightSystem(),
       drive: new DriveSystem(),
+      weapons: new WeaponSystem(opts.combat),
       power: new PowerSystem(),
       heat: new HeatSystem(),
       corrosion: new CorrosionSystem(),
       hull: new HullSystem(),
     };
     // Install order == update order: consumers run before the gauges they
-    // feed (drive draws power, then the capacitor recharges...).
+    // feed (drive + guns draw power, then the capacitor recharges...).
     for (const key of CORE_SYSTEM_ORDER) this.systems.install(this.core[key]);
+
+    /* --- combat ----------------------------------------------------------- */
+    /** Live enemy list. Never reassigned — restarts refill it in place so the
+        TargetingManager's reference stays valid. */
+    this.enemies = [];
+    this.targeting = new TargetingManager(this.enemies, CONFIG.combat.targeting);
+    this.kills = 0;
+
+    // Shared per-step context for systems that need more than the ship.
+    this.systems.context = {
+      world: this.world,
+      particles: this.particles,
+      camera: this.camera,
+      events: this.events,
+      targeting: this.targeting,
+      enemies: this.enemies,
+      time: 0,
+    };
 
     /* ----------------------------------------------------------------- ui -- */
     this.hud = new HUD(this.viewport, this.ship);
@@ -132,6 +155,10 @@ export class Game {
       camera: this.camera,
       debug: this.debug,
       state: this.state,
+      kills: 0,
+      targets: 0,
+      weapons: this.core.weapons,
+      targeting: this.targeting,
       frameDt: 0,
     };
     this._camTarget = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -150,11 +177,27 @@ export class Game {
     this.joystick.layout();
     this.hud.layout();
 
+    this._spawnEnemies();
+
     this._bindEvents();
     this.input.attach();
 
     this.loop.start();
     return this;
+  }
+
+  /** (Re)populate the sector with dummy targets. */
+  _spawnEnemies() {
+    this.enemies.length = 0; // keep the array identity: targeting watches it
+    const field = Enemy.spawnField({
+      world: this.world,
+      count: CONFIG.combat.enemies.count,
+      seed: this.world.seed ^ 0x5bf03635,
+      avoid: { x: this.world.width * 0.5, y: this.world.height * 0.5 },
+    });
+    for (let i = 0; i < field.length; i++) this.enemies.push(field[i]);
+    this.targeting.enemies = this.enemies;
+    return this.enemies;
   }
 
   _bindEvents() {
@@ -198,6 +241,19 @@ export class Game {
     this.events.on('ship:damaged', ({ amount }) => {
       // Screen flash scaled by how hard we were hit.
       this.hud.flash = Math.min(1, this.hud.flash + amount / 55);
+    });
+
+    /* --- combat feedback --------------------------------------------------- */
+    this.events.on('enemy:destroyed', ({ x, y }) => {
+      this.kills++;
+      this.particles.burst(46, {
+        x, y, speed: 300, life: 0.85, size: 5, color: '#ff8a3c', drag: 2.2, jitter: 18,
+      });
+      this.particles.burst(18, {
+        x, y, speed: 620, life: 0.35, size: 3, color: '#ffffff', drag: 3.4, jitter: 8,
+      });
+      // Killing things is a little bit loud.
+      this.camera.addShake(2.5);
     });
   }
 
@@ -275,12 +331,16 @@ export class Game {
     });
     this.updateContext.world = this.world;
     this._renderInfo.world = this.world; // the HUD minimap reads this
+    if (this.systems.context) this.systems.context.world = this.world;
 
     this.camera.setBounds(this.world.bounds.x, this.world.bounds.y, this.world.bounds.width, this.world.bounds.height);
     this.ship.reset(this.world.width * 0.5, this.world.height * 0.5, -Math.PI / 2);
     this.systems.reset();
     this.particles.clear();
     this.camera.snapTo(this.ship.x, this.ship.y);
+
+    this._spawnEnemies(); // fresh dummies for the fresh sector
+    this.kills = 0;
 
     this.hud.resetRun();
     this.runTime = 0;
@@ -382,6 +442,8 @@ export class Game {
     this.time += dt;
     this.updateContext.time = this.time;
     this.updateContext.dt = dt;
+    const sysCtx = this.systems.context;
+    if (sysCtx) sysCtx.time = this.time;
 
     // 1. Input (joystick + keyboard -> normalised axis)
     this.input.update(dt);
@@ -398,8 +460,10 @@ export class Game {
     // 3. Entities (on game over the hulk keeps drifting with its last modifiers)
     this.ship.update(dt, this.updateContext);
 
-    // 4. World + FX
+    // 4. World, enemies + FX (dummies tick on the game-over screen too, so
+    //    their respawn timers keep running and the wreck stays readable)
     this.world.update(dt);
+    for (let i = 0; i < this.enemies.length; i++) this.enemies[i].update(dt, this.updateContext);
     this.particles.update(dt);
 
     // 5. Camera last: it follows the ship's freshly integrated position.
@@ -436,8 +500,15 @@ export class Game {
     this.camera.applyTransform(ctx, alpha);
     this.world.renderGround(ctx, this.camera, vp);
     this.world.renderObstacles(ctx, this.camera);
+
+    // Enemies sit between the rocks and the ship; beams go on top of both.
+    for (let i = 0; i < this.enemies.length; i++) this.enemies[i].render(ctx, alpha);
+
     this.particles.render(ctx);
     if (this.ship.visible) this.ship.render(ctx, alpha);
+    if (this.state === 'playing' || this.state === 'gameover') {
+      this.core.weapons.render(ctx, alpha); // turrets + beams
+    }
     if (this.debug) this._renderWorldDebug(ctx, alpha);
     ctx.restore();
 
@@ -449,6 +520,8 @@ export class Game {
     this._renderInfo.debug = this.debug;
     this._renderInfo.state = this.state;
     this._renderInfo.frameDt = frameDt;
+    this._renderInfo.kills = this.kills;
+    this._renderInfo.targets = this.targeting.aliveCount;
     this.hud.render(ctx, this._renderInfo);
 
     if (this.state === 'title') this._renderTitle(ctx, frameDt);

@@ -299,6 +299,62 @@ try {
 check('360 frames across every gauge state render cleanly', renderError === null,
   renderError ? String(renderError) : '');
 
+/* --------------------------- combat integration --------------------------- */
+{
+  game.restart();
+  frames(2);
+
+  check('the sector is populated with dummy targets',
+    game.enemies.length > 10 && game.targeting.aliveCount > 10,
+    `${game.targeting.aliveCount}/${game.enemies.length} alive`);
+  check('weapons system owns three mounts',
+    game.core.weapons.mounts.length === 3, game.core.weapons.mounts.map((m) => m.id).join(','));
+
+  // Park the ship 200wu short of a dummy, nose on: the mounts must do the rest.
+  const dummy = game.enemies.find((e) => e.alive);
+  const hull0 = dummy.hull;
+  game.ship.teleport(dummy.x - 210, dummy.y, 0);
+  game.ship.vx = 0;
+  game.ship.vy = 0;
+  frames(30);
+
+  const muzzle = Math.hypot(game.core.weapons.left.muzzleX - game.ship.x,
+    game.core.weapons.left.muzzleY - game.ship.y);
+  check('mounts ride on the hull (local offset honoured)', muzzle > 10 && muzzle < 25, `${f(muzzle)} wu`);
+  check('mounts acquire a target automatically',
+    game.core.weapons.left.target === dummy || game.core.weapons.right.target === dummy,
+    `left=${game.core.weapons.left.target ? 'lock' : '-'} right=${game.core.weapons.right.target ? 'lock' : '-'}`);
+
+  frames(90); // 0.75s of beam time
+  check('lasers fire without player input', game.core.weapons.firingCount >= 1,
+    `${game.core.weapons.firingCount} beams`);
+  check('the beam cuts the dummy', dummy.hull < hull0 || !dummy.alive, `hull ${f(hull0)} -> ${f(dummy.hull)}`);
+
+  let calls = captureFrame();
+  const laser = CONFIG.combat.laser;
+  check('the beam is drawn (additive stroke in the laser colour)',
+    calls.some((c) => c.m === 'stroke' && String(c.stroke) === laser.color && c.composite === 'lighter'), '');
+  check('the HUD renders the GUNS row', texts(calls).some((t) => t.text === 'GUNS'), '');
+  check('the HUD renders one letter per hardpoint',
+    ['L', 'R', 'B'].every((l) => texts(calls).some((t) => t.text === l)), '');
+
+  // Grind it down: kills must be counted and announced.
+  const killsBefore = game.kills;
+  let particlesAtKill = -1;
+  game.events.on('enemy:destroyed', () => {
+    if (particlesAtKill < 0) particlesAtKill = game.particles.liveCount;
+  });
+  frames(600);
+  check('kills are counted', game.kills > killsBefore, `${killsBefore} -> ${game.kills}`);
+  check('kill FX spawned particles', particlesAtKill > 0, `${particlesAtKill} live at the moment of death`);
+  check('dummies come back so the range never runs dry',
+    game.enemies.some((e) => !e.alive) || game.targeting.aliveCount === game.enemies.length, '');
+
+  check('combat telemetry is exposed for the debug overlay',
+    typeof game.core.weapons.status() === 'object' && game.core.weapons.status().length === 3,
+    JSON.stringify(game.core.weapons.status()[0]));
+}
+
 /* ------------------------------ HUD contract ------------------------------ */
 {
   const p = CONFIG.palette;

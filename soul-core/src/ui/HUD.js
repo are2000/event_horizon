@@ -150,7 +150,7 @@ export class HUD {
     }
 
     /* ================================================== status line ======= */
-    this._drawStatusLine(ctx, px + 10, py + this.panelHeight - 11);
+    this._drawStatusLine(ctx, px + 10, py + this.panelHeight - 11, info);
 
     /* ================================================== speed / drift ===== */
     this._drawSpeed(ctx, safe);
@@ -232,7 +232,7 @@ export class HUD {
     ctx.fillText(`${Math.round(cur)}/${Math.round(max)}`, x + this.panelWidth - 20, y + 0.5);
   }
 
-  _drawStatusLine(ctx, x, y) {
+  _drawStatusLine(ctx, x, y, info = {}) {
     const p = CONFIG.palette;
     const ship = this.ship;
 
@@ -245,6 +245,33 @@ export class HUD {
     const massText = `${ship.stats.weight.toFixed(1)} / ${ship.stats.maxWeight}`;
     ctx.fillStyle = ship.isOverloaded ? p.gaugeCritical : p.weight;
     ctx.fillText(massText, x + 34, y);
+
+    /* --- weapon mounts: one letter per hardpoint --------------------------- */
+    const weapons = info.weapons;
+    if (weapons) {
+      let gx = x + 100;
+      ctx.fillStyle = p.textDim;
+      ctx.fillText('GUNS', gx, y);
+      gx += 30;
+      for (let i = 0; i < weapons.mounts.length; i++) {
+        const m = weapons.mounts[i];
+        const state = m.state;
+        ctx.fillStyle =
+          state === 'firing' ? p.gaugeHeat : state === 'tracking' ? p.accent : 'rgba(207,224,255,0.28)';
+        ctx.fillText(m.label, gx, y);
+        gx += 9;
+      }
+
+      // Kills + how many targets are still up.
+      ctx.fillStyle = p.textDim;
+      ctx.fillText('KILLS', gx + 6, y);
+      ctx.fillStyle = p.text;
+      ctx.fillText(String(info.kills ?? 0), gx + 34, y);
+      ctx.fillStyle = p.textDim;
+      ctx.fillText('TGT', gx + 52, y);
+      ctx.fillStyle = p.gaugeCorrosion;
+      ctx.fillText(String(info.targets ?? 0), gx + 70, y);
+    }
 
     // Highest-priority warning on the right.
     let warning = null;
@@ -356,6 +383,29 @@ export class HUD {
     const p = CONFIG.palette;
     const s = ship.stats;
     const systems = info.systems;
+    const weapons = info.weapons;
+
+    /* --- weapon telemetry --------------------------------------------------- */
+    const gunLines = [];
+    if (weapons) {
+      const mounts = weapons.mounts;
+      gunLines.push(
+        `guns ${mounts.map((m) => `${m.label}${m.state === 'firing' ? '*' : m.target ? '~' : '-'}`).join(' ')}` +
+        `  firing ${weapons.firingCount}/${mounts.length}  kills ${weapons.kills}`,
+      );
+      // Local angle, legal arc and aiming error, in degrees.
+      gunLines.push(
+        mounts
+          .map((m) => {
+            const deg = (r) => ((r * 180) / Math.PI).toFixed(0);
+            return `${m.label} ${deg(m.localAngle)}° in[${deg(m.arcCenter - m.arcHalf)}..${deg(m.arcCenter + m.arcHalf)}] e${((m.aimError * 180) / Math.PI).toFixed(0)}°`;
+          })
+          .join(' | '),
+      );
+      gunLines.push(
+        `beam draw ${weapons.powerDraw.toFixed(1)} pwr/s  targets ${info.targets ?? 0} alive  scans ${info.targeting ? info.targeting.scans : 0}`,
+      );
+    }
 
     const lines = [
       `fps ${loop.fps.toFixed(0)}  step ${(loop.fixedStep * 1000).toFixed(1)}ms x${loop.stepsLastFrame}`,
@@ -367,6 +417,7 @@ export class HUD {
       `hull ${s.hull.toFixed(1)}/${s.maxHull}  alive ${ship.alive}  state ${info.state}`,
       systems ? systems.explain('thrustMul') : '',
       systems ? systems.explain('maxSpeedMul') : '',
+      ...gunLines,
       `cam ${info.camera.x.toFixed(0)},${info.camera.y.toFixed(0)} z${info.camera.zoom.toFixed(3)}`,
       info.input ? info.input.joystick.debugString() : '',
       `view ${vp.width}x${vp.height} @${vp.dpr.toFixed(2)}  safe-b ${safe.bottom}`,
