@@ -756,3 +756,94 @@ body.is-hidden #game {
   .inv-panel { gap: 6px; padding: 8px 8px 6px; }
   .inv-subtitle { display: none; }
 }
+
+/* ==========================================================================
+   Debug pad — touch twins of the debug keys.
+   A phone has no keyboard, so 6 / 7 / 8 / 0 are useless there. This strip
+   fires the same `Game._onKey` codes, sits above the canvas (so a tap never
+   reaches the virtual stick) and collapses to a pill mid-run.
+   ========================================================================== */
+.dbg-pad {
+  position: absolute;
+  right: calc(8px + var(--safe-right));
+  /* Bottom-anchored, stacking upward: the top-right belongs to the minimap
+     and the top strip to the HUD panel, so this is the one edge that is free
+     on every phone size (the stick is centred, the cargo FAB is on the left). */
+  bottom: calc(14px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 6px;
+  z-index: 5;
+  pointer-events: none; /* only the buttons grab touches */
+}
+
+.dbg-pad > * {
+  pointer-events: auto;
+}
+
+.dbg-col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.dbg-pad.is-collapsed .dbg-col {
+  display: none;
+}
+
+.dbg-pill {
+  display: none;
+}
+
+.dbg-pad.is-collapsed .dbg-pill {
+  display: block;
+}
+
+.dbg-btn,
+.dbg-collapse,
+.dbg-pill {
+  min-width: 58px;
+  min-height: 40px;
+  padding: 0 8px;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+  color: #cfe0ff;
+  background: rgba(9, 16, 28, 0.82);
+  border: 1px solid rgba(207, 224, 255, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dbg-btn:active,
+.dbg-pill:active,
+.dbg-collapse:active {
+  background: rgba(53, 224, 255, 0.22);
+  border-color: rgba(53, 224, 255, 0.5);
+  color: #ffffff;
+}
+
+.dbg-collapse {
+  align-self: flex-end;
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: #9fb4d8;
+}
+
+.dbg-pill {
+  min-height: 34px;
+  color: #35e0ff;
+  border-color: rgba(53, 224, 255, 0.35);
+}

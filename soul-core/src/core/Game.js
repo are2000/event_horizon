@@ -46,6 +46,7 @@ import { ItemPickup } from '../entities/ItemPickup.js';
 import { DROP_TABLE, getDef } from '../inventory/ItemDefs.js';
 import { HUD } from '../ui/HUD.js';
 import { VirtualJoystick } from '../ui/VirtualJoystick.js';
+import { DebugPad } from '../ui/DebugPad.js';
 import { World } from '../world/World.js';
 import { Camera } from './Camera.js';
 import { EventBus } from './EventBus.js';
@@ -156,6 +157,11 @@ export class Game {
     this.hud = new HUD(this.viewport, this.ship);
     /** @type {InventoryUI|null} built in init() once the DOM exists. */
     this.inventoryUI = null;
+    /**
+     * Touch twins of the debug keys (a phone has no keyboard).
+     * @type {DebugPad|null} built in init() once the DOM exists.
+     */
+    this.debugPad = null;
     /** While the cargo hold is open the world is frozen (safe fiddling). */
     this._pausedBeforeInventory = false;
     this._lastFullToast = -99; // throttle for the "hold is full" toast
@@ -248,6 +254,10 @@ export class Game {
     // DOM overlay for the cargo hold (needs the #ui-layer element).
     this.inventoryUI = new InventoryUI({ game: this, inventory: this.inventory });
     this._syncInventoryVisibility();
+
+    // Debug pad: the same debug actions, reachable with a thumb.
+    this.debugPad = new DebugPad({ game: this });
+    this.debugPad.setVisible(this.debug);
 
     this._spawnEnemies();
 
@@ -645,6 +655,7 @@ export class Game {
       case 'Backquote':
       case 'F3':
         this.debug = !this.debug;
+        this.debugPad?.setVisible(this.debug);
         break;
       case 'KeyP':
         this.togglePause();
@@ -1045,6 +1056,7 @@ export class Game {
     this.loop.stop();
     this.input.detach();
     this.inventoryUI?.destroy();
+    this.debugPad?.destroy();
   }
 }
 

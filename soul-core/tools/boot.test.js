@@ -395,6 +395,66 @@ check('360 frames across every gauge state render cleanly', renderError === null
   check('recovered back to a playable state after the HUD probes', game.state === 'playing', game.state);
 }
 
+/* ------------------------------ debug pad -------------------------------- */
+/* The phone has no keyboard, so the debug keys need touch twins. These fire
+   the SAME code path (Game._onKey), which is the property worth pinning. */
+{
+  game.debug = true;
+  game.debugPad?.setVisible(true);
+  check('debug pad is built and visible with debug on',
+    !!game.debugPad && game.debugPad.visible === true, '');
+  check('debug pad has one button per action', game.debugPad?.buttons?.size === 6,
+    String(game.debugPad?.buttons?.size));
+
+  const tap = (key) => game.debugPad.buttons.get(key).dispatch('pointerdown', {});
+
+  const p0 = game.pickups.length;
+  tap('Digit8');
+  check('[GUNS] drops one crate per gun', game.pickups.length === p0 + 4,
+    `${p0} -> ${game.pickups.length}`);
+
+  const e0 = game.enemies.length;
+  tap('Digit6');
+  check('[RAIDER] spawns a raider', game.enemies.length === e0 + 1, '');
+
+  const s0 = game.scrap.length;
+  tap('Digit7');
+  const sVal = game.scrap.slice(s0).reduce((a, b) => a + b.value, 0);
+  check('[SCRAP] drops 10 scrap value', game.scrap.length > s0 && sVal === 10,
+    `${game.scrap.length - s0} shards / ${sVal}`);
+
+  const h0 = game.ship.stats.heat;
+  tap('Digit1');
+  check('[HEAT] adds heat', game.ship.stats.heat > h0, `${f(h0)} -> ${f(game.ship.stats.heat)}`);
+
+  const c0 = game.ship.stats.coreCorrosion;
+  tap('Digit3');
+  check('[CORR] adds corrosion', game.ship.stats.coreCorrosion > c0,
+    `${f(c0)} -> ${f(game.ship.stats.coreCorrosion)}`);
+
+  tap('Digit0');
+  check('[FIX] full service', game.ship.stats.heat === 0 &&
+    game.ship.stats.coreCorrosion === 0 && game.ship.stats.hull === game.ship.stats.maxHull, '');
+
+  game.debugPad.collapseBtn.dispatch('pointerdown', {});
+  check('pad collapses to the DBG pill', game.debugPad.collapsed === true, '');
+  game.debugPad.pill.dispatch('pointerdown', {});
+  check('pill expands the pad again', game.debugPad.collapsed === false, '');
+
+  // Hidden pad + debug off must be inert (guarded inside Game._onDebugKey).
+  game._onKey('F3'); // debug off
+  check('pad hides when debug is toggled off', game.debugPad.visible === false, '');
+  const p1 = game.pickups.length;
+  tap('Digit8');
+  check('pad is inert while debug is off', game.pickups.length === p1, '');
+  game._onKey('F3'); // back on
+
+  // Clean up the junk the pad just spawned so later sections stay deterministic.
+  game.pickups.length = 0;
+  game.scrap.length = 0;
+  frames(2);
+}
+
 /* ------------------------------- blur safety ------------------------------- */
 fire(windowHandlers, 'keydown', { code: 'KeyD' });
 fire(windowHandlers, 'blur', {});

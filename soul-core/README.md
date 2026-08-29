@@ -613,6 +613,13 @@ peripheral vision while you are busy shooting.
 | `7` (debug) | drop 10 scrap next to the ship |
 | `8` (debug) | ring the ship with one T2 crate per gun (laser / cannon / kinetic / plasma) |
 
+**On a phone there is no keyboard**, so `?debug=1` also mounts an on-screen
+**debug pad** on the right edge (above the home indicator): `GUNS` · `RAIDER` ·
+`SCRAP` · `HEAT` · `CORR` · `FIX`. Each button fires the same `Game._onKey`
+code as its keyboard twin, so the two can never drift apart. `×` collapses the
+strip to a small `DBG` pill; tap the pill to bring it back. Pressing a button
+never reaches the virtual stick — the pad is DOM, layered above the canvas.
+
 ---
 
 ## 9. Balance knobs — `src/config.js → systems`

@@ -4,7 +4,9 @@
  * Entry point. Creates the Game, exposes a debug handle, and reads a few
  * optional URL parameters:
  *
- *   ?debug=1         enable the debug overlay from the start
+ *   ?debug=1         enable the debug overlay + the on-screen debug pad
+ *                    (the pad is how a *phone* reaches the debug actions,
+ *                    since 6 / 7 / 8 / 0 need a keyboard)
  *   ?seed=12345      generate a specific sector
  *   ?rocks=200       asteroid count
  *   ?corrosion=2     corrosion %/s (default 0.35) — use 0 for a sandbox run
@@ -56,6 +58,7 @@ function boot() {
   //   SoulCore.inventory.debugString()       -> hold / mass / load / hardpoints
   //   SoulCore.openInventory()               -> the cargo hold (or press I)
   //   SoulCore._debugSpawnRaider(200)        -> a live raider, 200wu out
+  //   SoulCore.debugPad.press('Digit8')      -> same as the on-screen [GUNS] button
   //   SoulCore.scrap / runScrap / scrapBank  -> the economy
   window.SoulCore = game;
 
