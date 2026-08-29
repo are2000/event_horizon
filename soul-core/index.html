@@ -142,6 +142,25 @@
         for (var key in hints) if (hints[key]) hints[key].hidden = key !== which;
       }
 
+      /**
+       * Is this error from OUR code? A host like raw.githack injects scripts
+       * from its own origin; when one of those throws, the browser reports an
+       * ErrorEvent with an EMPTY message ("Script error.") and a foreign
+       * filename, because it will not leak another origin's details. That is
+       * how the panel ended up saying "Unknown error" over a running game.
+       */
+      function isOurs(e) {
+        var msg = String(e.message || '');
+        if (!msg || msg === 'Script error.') return false; // cross-origin: no details
+        var f = e.filename || '';
+        if (!f) return true; // no source given, but it did carry a message
+        try {
+          return new URL(f, location.href).origin === location.origin;
+        } catch (err) {
+          return f.indexOf(location.href) === 0;
+        }
+      }
+
       window.addEventListener('error', function (e) {
         // Only a real exception is fatal. A resource error (e.target is an
         // element, e.message undefined) means something ELSE on the page —
@@ -150,6 +169,10 @@
           (typeof e.message === 'string' && e.message.length > 0);
         if (!isException) {
           console.warn('[SoulCore] a resource failed to load, ignoring:', e.target && (e.target.src || e.target.href));
+          return;
+        }
+        if (!isOurs(e)) {
+          console.warn('[SoulCore] error from another origin (host script?), ignoring:', e.filename || '(no file)');
           return;
         }
         var text = e.message || 'Unknown error';

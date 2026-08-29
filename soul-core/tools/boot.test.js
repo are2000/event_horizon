@@ -480,7 +480,10 @@ check('360 frames across every gauge state render cleanly', renderError === null
     };
     const handlers = {};
     const win = { addEventListener: (t, fn) => { (handlers[t] = handlers[t] || []).push(fn); } };
-    const loc = { protocol };
+    // isOurs() resolves e.filename against location.href, so the fake location
+    // needs a real URL (file: has the opaque origin 'null', like a browser).
+    const href = protocol + '//example.test/index.html';
+    const loc = { protocol, href, origin: protocol === 'file:' ? 'null' : 'https://example.test' };
     const run = () => new Function('window', 'document', 'location', guard)(win, doc, loc);
     /** Fire the guard's error listener with a synthetic event. */
     const error = (evt) => (handlers.error || []).forEach((fn) => fn(evt));
@@ -521,6 +524,18 @@ check('360 frames across every gauge state render cleanly', renderError === null
   check('a real exception shows the panel', d.byId.fatal.hidden === false, '');
   check('  ...with the message attached', /boom/.test(d.byId['fatal-msg'].textContent),
     d.byId['fatal-msg'].textContent);
+
+  // Cross-origin: the browser hides the message ("Script error."), so this is
+  // the host's injected script, not us — and it must not raise the panel.
+  d = miniDom({ protocol: 'https:', modules: true });
+  d.run();
+  d.error({ message: '', filename: 'https://cdn.other.test/banner.js' });
+  check('cross-origin error with no message is ignored', d.byId.fatal.hidden === true, '');
+
+  d = miniDom({ protocol: 'https:', modules: true });
+  d.run();
+  d.error({ message: 'Script error.', filename: '' });
+  check('"Script error." (the cross-origin placeholder) is ignored', d.byId.fatal.hidden === true, '');
 
   // After a successful boot nothing is fatal: the game is clearly running.
   d = miniDom({ protocol: 'https:', modules: true });
