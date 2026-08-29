@@ -49,8 +49,33 @@
     <div id="fatal" hidden>
       <h1>Soul Core failed to start</h1>
       <p id="fatal-msg"></p>
-      <p class="hint">Serve this folder over HTTP (ES modules do not run from <code>file://</code>):<br />
-        <code>python3 -m http.server 8000</code></p>
+
+      <!-- Shown only when the page is opened from disk AND still uses ES
+           modules: browsers block those on file:// (CORS), so no amount of
+           reloading will help. Point at the one build that does work offline. -->
+      <p class="hint" id="fatal-hint-modules" hidden>
+        You opened <code>index.html</code> straight from disk
+        (<code>file://</code>). Browsers block ES modules there, so this page
+        can only run from a server.<br /><br />
+        <strong>No server?</strong> open
+        <a href="standalone.html">standalone.html</a> instead — the whole game
+        in one self-contained file.
+      </p>
+
+      <!-- Shown when the self-contained build fails from disk: file:// is
+           legal for it, so this is a different problem. -->
+      <p class="hint" id="fatal-hint-standalone" hidden>
+        This build is self-contained, so <code>file://</code> should work —
+        try reloading, or open it over http(s) if your browser keeps blocking
+        it.
+      </p>
+
+      <p class="hint" id="fatal-hint-http" hidden>
+        Something went wrong while starting. Reload; if it keeps happening,
+        the browser console has the details.
+      </p>
+
+      <button id="fatal-reload" type="button">Reload</button>
     </div>
   </div>
 
@@ -66,15 +91,57 @@
     will be blocked by CORS. Any static server works (see README.md).
   -->
   <script>
-    // Surface boot failures instead of a silent black screen.
-    window.addEventListener('error', (e) => {
-      const box = document.getElementById('fatal');
-      const msg = document.getElementById('fatal-msg');
-      if (box && msg && box.hidden) {
-        box.hidden = false;
-        msg.textContent = (e.message || 'Unknown error') + (e.filename ? ' @ ' + e.filename : '');
+    /**
+     * Surface boot failures instead of a silent black screen — and tell the
+     * player *which* failure it is, because "ES modules do not run from
+     * file://" is only true for the modular build.
+     */
+    (function () {
+      var box = document.getElementById('fatal');
+      var msg = document.getElementById('fatal-msg');
+      var hints = {
+        modules: document.getElementById('fatal-hint-modules'),
+        standalone: document.getElementById('fatal-hint-standalone'),
+        http: document.getElementById('fatal-hint-http'),
+      };
+      var shown = false;
+
+      /** True when this copy still loads ES modules (standalone.html does not). */
+      function usesModules() {
+        return !!document.querySelector('script[type="module"]');
       }
-    });
+
+      function show(text) {
+        if (!box || shown) return;
+        shown = true;
+        box.hidden = false;
+        if (msg) msg.textContent = text || 'Unknown error';
+
+        var isFile = location.protocol === 'file:';
+        var which = !isFile ? 'http' : (usesModules() ? 'modules' : 'standalone');
+        for (var key in hints) if (hints[key]) hints[key].hidden = key !== which;
+      }
+
+      // capture: a module that never loaded reports an error *event* on the
+      // script element, and those do not bubble — without capture we would
+      // never see it.
+      window.addEventListener('error', function (e) {
+        var text = e.message || (e.target && e.target.src ? 'Failed to load ' + e.target.src : 'Unknown error');
+        if (e.filename) text += ' @ ' + e.filename;
+        show(text);
+      }, true);
+
+      var reload = document.getElementById('fatal-reload');
+      if (reload) reload.addEventListener('click', function () { location.reload(); });
+
+      // Fail fast (and accurately) instead of waiting for the loader to give up.
+      if (location.protocol === 'file:' && usesModules()) {
+        show('ES modules are blocked on file:// — this copy cannot boot from disk.');
+      }
+
+      // main.js calls this if boot() throws, so both paths share one panel.
+      window.__soulcoreShowFatal = show;
+    })();
   </script>
   <script type="module" src="src/main.js"></script>
 </body>

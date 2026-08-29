@@ -37,6 +37,9 @@ const code = html.slice(start, end);
 check('no unresolved module specifiers', !/\bfrom\s+["']\.\.?\//.test(code), '');
 check('no export statements', !/^\s*export\s+(default|const|class|function|\{)/m.test(code), '');
 check('stylesheet is inlined, not linked', !/<link rel="stylesheet"/.test(html), '');
+check('no module script tag (this is what file:// blocks)', !/<script[^>]+type="module"/.test(html), '');
+check('carries the file:// aware fatal panel',
+  html.includes('fatal-hint-standalone') && html.includes('__soulcoreShowFatal'), '');
 
 try {
   new Function(code)();

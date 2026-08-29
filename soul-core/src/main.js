@@ -76,6 +76,11 @@ try {
   boot();
 } catch (err) {
   console.error('[SoulCore] boot failed', err);
+  // Share the one fatal panel (and its file:// / http:// aware hints) with the
+  // early guard in index.html, so a boot failure never looks like a CORS one.
+  if (typeof window.__soulcoreShowFatal === 'function') {
+    window.__soulcoreShowFatal(String((err && err.message) || err));
+  }
   const box = document.getElementById('fatal');
   const msg = document.getElementById('fatal-msg');
   if (box && msg) {

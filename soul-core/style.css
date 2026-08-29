@@ -847,3 +847,30 @@ body.is-hidden #game {
   color: #35e0ff;
   border-color: rgba(53, 224, 255, 0.35);
 }
+
+/* Boot-failure panel: hint links + reload button (see index.html). */
+#fatal .hint {
+  max-width: 34ch;
+}
+
+#fatal a {
+  color: #35e0ff;
+  text-decoration: underline;
+}
+
+#fatal-reload {
+  margin-top: 6px;
+  padding: 10px 18px;
+  font: inherit;
+  color: #05060a;
+  background: #35e0ff;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#fatal-reload:active {
+  background: #8bd450;
+}

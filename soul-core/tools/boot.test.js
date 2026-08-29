@@ -455,6 +455,55 @@ check('360 frames across every gauge state render cleanly', renderError === null
   frames(2);
 }
 
+/* --------------------------- boot failure panel ---------------------------- */
+/* A player who opened index.html from disk used to get a black screen and a
+   CORS console entry. Now a guard in index.html explains itself — the message
+   depends on BOTH the protocol and whether this copy still uses ES modules
+   (standalone.html does not, and file:// is fine for it). */
+{
+  const src = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8'));
+  const start = src.indexOf('(function () {');
+  const end = src.indexOf('})();', start) + '})();'.length;
+  check('index.html carries the early fatal-panel guard', start > 0 && end > start, '');
+  const guard = src.slice(start, end);
+
+  /** Minimal DOM: only what the guard touches. */
+  function miniDom({ protocol, modules }) {
+    const byId = {};
+    const mk = (id) => (byId[id] = { id, hidden: true, textContent: '', addEventListener() {} });
+    ['fatal', 'fatal-msg', 'fatal-hint-modules', 'fatal-hint-standalone', 'fatal-hint-http', 'fatal-reload']
+      .forEach(mk);
+    const doc = {
+      getElementById: (id) => byId[id] ?? null,
+      querySelector: (sel) => (modules && sel.includes('module') ? {} : null),
+    };
+    const win = { addEventListener() {} };
+    const loc = { protocol };
+    const run = () => new Function('window', 'document', 'location', guard)(win, doc, loc);
+    return { win, doc, loc, byId, run };
+  }
+
+  // file:// + ES modules: the case that used to be a silent black screen.
+  let d = miniDom({ protocol: 'file:', modules: true });
+  d.run();
+  check('file:// + modules shows the panel', d.byId.fatal.hidden === false, '');
+  check('  ...and names the real cause', /ES modules are blocked/.test(d.byId['fatal-msg'].textContent),
+    d.byId['fatal-msg'].textContent);
+  check('  ...and points at standalone.html',
+    d.byId['fatal-hint-modules'].hidden === false && d.byId['fatal-hint-http'].hidden === true);
+
+  // file:// + the self-contained build: legal, so a different hint.
+  d = miniDom({ protocol: 'file:', modules: false });
+  d.run();
+  check('file:// + standalone.html stays quiet', d.byId.fatal.hidden === true, '');
+
+  // http://: the panel only appears if something actually throws.
+  d = miniDom({ protocol: 'https:', modules: true });
+  d.run();
+  check('http(s) does not panic on load', d.byId.fatal.hidden === true, '');
+}
+
 /* ------------------------------- blur safety ------------------------------- */
 fire(windowHandlers, 'keydown', { code: 'KeyD' });
 fire(windowHandlers, 'blur', {});
