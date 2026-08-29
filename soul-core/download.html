@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>تحميل Soul Core</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px 18px calc(24px + env(safe-area-inset-bottom));
+      background: #05060a; color: #cfe0ff;
+      font: 15px/1.7 system-ui, "Segoe UI", Roboto, sans-serif;
+      max-width: 640px; margin-inline: auto;
+    }
+    h1 { font-size: 20px; color: #35e0ff; margin: 0 0 4px; }
+    p.sub { color: #9fb4d8; margin: 0 0 22px; font-size: 13px; }
+    .btn {
+      display: block; width: 100%; margin: 0 0 12px; padding: 18px 16px;
+      text-align: center; text-decoration: none; font-weight: 700; font-size: 16px;
+      color: #05060a; background: #35e0ff; border: 0; border-radius: 14px;
+    }
+    .btn.alt { background: #1b2740; color: #cfe0ff; border: 1px solid #2c3f63; }
+    .btn small { display: block; font-weight: 400; font-size: 12px; opacity: .8; margin-top: 4px; }
+    h2 { font-size: 15px; color: #8bd450; margin: 26px 0 8px; }
+    ol { padding-inline-start: 20px; margin: 0; }
+    li { margin-bottom: 6px; }
+    code { background: #131c2e; padding: 2px 6px; border-radius: 6px; color: #ffc857; font-size: 13px; }
+    .note { color: #9fb4d8; font-size: 13px; border-inline-start: 3px solid #2c3f63; padding-inline-start: 10px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>تحميل لعبة Soul Core</h1>
+  <p class="sub">ملف واحد — يشتغل أوفلاين، من غير إنترنت ولا سيرفر.</p>
+
+  <a class="btn" href="standalone-debug.html" download>
+    ⬇ حمّل اللعبة (مع أدوات التجربة)
+    <small>النسخة دي فيها أزرار GUNS / RAIDER / SCRAP / FIX على الشاشة — دي اللي جرّب بيها</small>
+  </a>
+
+  <a class="btn alt" href="standalone.html" download>
+    ⬇ نسخة نظيفة (من غير أدوات)
+    <small>لما تحب تلعب عادي</small>
+  </a>
+
+  <h2>بعد التحميل — أندرويد</h2>
+  <ol>
+    <li>افتح تطبيق <strong>Files</strong> (أو «ملفاتي»).</li>
+    <li>ادخل مجلد <strong>Downloads</strong>.</li>
+    <li>دوس على <code>standalone-debug.html</code>.</li>
+    <li>اختار <strong>Chrome</strong> لما يسألك تفتحه بإيه. ← هتشتغل على طول.</li>
+  </ol>
+
+  <h2>بعد التحميل — آيفون</h2>
+  <ol>
+    <li>افتح تطبيق <strong>Files</strong> → <strong>Downloads</strong>.</li>
+    <li>دوس على الملف — هيفتح في <strong>Safari</strong> ويشتغل.</li>
+    <li>ممكن كمان: Safari → مشاركة → <strong>Add to Home Screen</strong> عشان يبقى زي app.</li>
+  </ol>
+
+  <p class="note">
+    الملف ده متكامل (الرسومات والكود كله جواه)، مش محتاج إنترنت. لو حبيت تلعب على الكمبيوتر:
+    دوس كليك يمين على الملف وافتحه بأي متصفح — أو شغّل السيرفر بالأمر
+    <code>python3 -m http.server 8000</code> جوه فولدر <code>soul-core</code> وافتح
+    <code>http://localhost:8000</code>.
+  </p>
+</body>
+</html>
