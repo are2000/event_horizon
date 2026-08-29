@@ -250,6 +250,25 @@ export class Ship extends Entity {
   }
 
   /**
+   * Add corrosion instantly — the opposite of `cleanCorrosion`.
+   * Ramming raiders use this: a hit costs you hull AND a chunk of your
+   * remaining run time, in one bite. CorrosionSystem sees the clamped value
+   * on its next step and emits the meltdown if it just hit 100%.
+   */
+  corrode(amount) {
+    if (amount <= 0) return this.stats.coreCorrosion;
+    this.stats.coreCorrosion = clamp(this.stats.coreCorrosion + amount, 0, 100);
+    return this.stats.coreCorrosion;
+  }
+
+  /** How far past `corrosionFxThreshold` we are, 0..1 (drives the sparks). */
+  get decaySeverity() {
+    const t = CONFIG.systems.corrosionFxThreshold;
+    const c = this.corrosionRatio;
+    return c <= t ? 0 : clamp((c - t) / Math.max(0.0001, 1 - t), 0, 1);
+  }
+
+  /**
    * Back to factory fresh — used by Game.restart(). Systems are reset
    * separately through SystemsManager.reset().
    */
@@ -384,6 +403,48 @@ export class Ship extends Entity {
 
     /* 8. ENGINE FX ---------------------------------------------------------- */
     this._emitExhaust(ctx, dt);
+    this._emitDecaySparks(ctx, dt);
+  }
+
+  /**
+   * The Great Decay, made visible: past `corrosionFxThreshold` the hull starts
+   * throwing off purple sparks and shedding flakes, faster and brighter the
+   * closer the core is to meltdown. It is the only warning you get that is
+   * attached to the SHIP rather than a bar at the top of the screen — you
+   * notice it in peripheral vision while you are busy shooting.
+   */
+  _emitDecaySparks(ctx, dt) {
+    if (!ctx.particles || !this.alive) return;
+    const sev = this.decaySeverity;
+    if (sev <= 0) {
+      this._decayAccum = 0;
+      return;
+    }
+
+    // 3/s at the threshold, ~26/s at the meltdown — a visible escalation.
+    this._decayAccum = (this._decayAccum ?? 0) + dt * (3 + sev * 23);
+    let count = Math.floor(this._decayAccum);
+    if (count <= 0) return;
+    this._decayAccum -= count;
+    if (count > 4) count = 4; // per-step budget
+
+    const purple = CONFIG.palette.gaugeCorrosion;
+    for (let i = 0; i < count; i++) {
+      // Sparks come off anywhere on the hull, drifting outward.
+      const a = Math.random() * Math.PI * 2;
+      const r = this.radius * (0.5 + Math.random() * 0.7);
+      const spd = 40 + Math.random() * 130 * sev;
+      ctx.particles.emit({
+        x: this.x + Math.cos(a) * r + (Math.random() - 0.5) * 6,
+        y: this.y + Math.sin(a) * r + (Math.random() - 0.5) * 6,
+        vx: this.vx * 0.35 + Math.cos(a) * spd,
+        vy: this.vy * 0.35 + Math.sin(a) * spd,
+        life: 0.25 + Math.random() * 0.45 * (0.5 + sev),
+        size: 1.6 + Math.random() * 2.4,
+        color: Math.random() < 0.3 ? '#e9c4ff' : purple,
+        drag: 1.8,
+      });
+    }
   }
 
   /* ----------------------------------------------------------- collisions -- */
@@ -597,6 +658,22 @@ export class Ship extends Entity {
       ctx.globalAlpha = 1;
     }
 
+    /* --- decay aura: the hull is coming apart ----------------------------- */
+    const decay = this.decaySeverity;
+    if (decay > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      // A slow throb plus a fast flicker: sickly, not merely coloured.
+      const throb = 0.5 + 0.5 * Math.sin(this.age * 3.2);
+      const flicker = 0.65 + 0.35 * Math.sin(this.age * 17 + this.x * 0.01);
+      ctx.globalAlpha = decay * (0.28 + 0.4 * throb) * flicker;
+      ctx.fillStyle = CONFIG.palette.gaugeCorrosion;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius * (1.55 + decay * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     /* --- overheat glow (the core is cooking) ------------------------------ */
     if (this.isOverheating) {
       const sev = 0.35 + this.overheatSeverity * 0.65;
@@ -614,8 +691,10 @@ export class Ship extends Entity {
     const L = this.length * 0.5;
     const W = this.radius * 0.9;
 
-    ctx.fillStyle = p.hull;
-    ctx.strokeStyle = p.hullDark;
+    // The plating itself goes sickly as the decay eats it: the hull colour
+    // lerps toward the corrosion purple instead of staying clean.
+    ctx.fillStyle = decay > 0 ? mixHex(p.hull, CONFIG.palette.gaugeCorrosion, decay * 0.55) : p.hull;
+    ctx.strokeStyle = decay > 0 ? mixHex(p.hullDark, CONFIG.palette.gaugeCorrosion, decay * 0.7) : p.hullDark;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(L, 0); // nose
@@ -627,7 +706,10 @@ export class Ship extends Entity {
     ctx.stroke();
 
     // Cockpit / Soul Core placeholder (this becomes the glowing core later).
-    ctx.fillStyle = p.accent;
+    // It flickers toward purple as the core decays.
+    ctx.fillStyle = decay > 0 && Math.sin(this.age * 11) > 0.35
+      ? CONFIG.palette.gaugeCorrosion
+      : p.accent;
     ctx.beginPath();
     ctx.arc(L * 0.12, 0, this.radius * 0.32, 0, Math.PI * 2);
     ctx.fill();
@@ -642,5 +724,21 @@ export class Ship extends Entity {
 }
 
 const ZERO = { x: 0, y: 0 };
+
+/**
+ * Blend two '#rrggbb' colours. Used for the decay tint so the hull can rot
+ * without a second copy of the art. Cheap enough to run per frame (and the
+ * result is stable while `t` is stable).
+ */
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const ar = (pa >> 16) & 255; const ag = (pa >> 8) & 255; const ab = pa & 255;
+  const br = (pb >> 16) & 255; const bg = (pb >> 8) & 255; const bb = pb & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`;
+}
 
 export default Ship;

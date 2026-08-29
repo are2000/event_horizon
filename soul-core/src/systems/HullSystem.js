@@ -8,6 +8,7 @@
  * Sources today:
  *   • impacts   : listens for 'ship:impact' on the event bus (asteroids, walls)
  *   • thermal   : the hull cooks while the core is redlined
+ *   • ramming   : listens for 'ship:rammed' — a raider that reached the hull
  *
  * At 0 hull the ship emits 'ship:destroyed' and the Game ends the run.
  *
@@ -23,17 +24,38 @@ export class HullSystem extends ShipSystem {
   constructor(config = {}) {
     super({ id: HullSystem.id, ...config });
     this._offImpact = null;
+    this._offRam = null;
+    this.rams = 0; // telemetry
   }
 
   onAttach(ship) {
     // Subscribe through the manager's bus, and keep the unsubscribe handle so
     // a hot-uninstalled system can never leak a listener into the next run.
     this._offImpact = this.events?.on('ship:impact', (e) => this._onImpact(e)) ?? null;
+    this._offRam = this.events?.on('ship:rammed', (e) => this._onRam(e)) ?? null;
   }
 
   onDetach() {
     if (this._offImpact) this._offImpact();
+    if (this._offRam) this._offRam();
     this._offImpact = null;
+    this._offRam = null;
+  }
+
+  /**
+   * A raider got through. CollisionSystem decides WHEN; this decides how much
+   * hull it costs, so armour/resistance mods still have one home.
+   */
+  _onRam(e) {
+    if (!this.ship || !this.ship.alive) return;
+    this.rams++;
+    this.ship.damage(e.damage);
+    this.events?.emit('ship:damaged', {
+      amount: e.damage, source: 'ram', ship: this.ship, enemy: e.enemy,
+    });
+    if (this.ship.stats.hull <= 0) {
+      this.events?.emit('ship:destroyed', { ship: this.ship, source: 'ram' });
+    }
   }
 
   _onImpact(e) {
@@ -60,7 +82,9 @@ export class HullSystem extends ShipSystem {
     }
   }
 
-  reset() {}
+  reset() {
+    this.rams = 0;
+  }
 }
 
 export default HullSystem;

@@ -10,6 +10,9 @@
  *   │ CORROSION  ██░░░░░░░░░░░░░░░░░    6/100  │  purple
  *   │ MASS 34.0 / 100            ⚠ CORE OVERHEAT│
  *   └──────────────────────────────────────────┘
+ *   ┌────────┐
+ *   │ ◈ SCRAP 128 │                              │  gold, pulses on pickup
+ *   └────────┘
  *
  * Plus: minimap (top-right, below the panel), speed/drift readout
  * (bottom-right), hint line, and the debug overlay.
@@ -89,6 +92,12 @@ export class HUD {
     /** Screen flash (0..1) driven by Game on damage/meltdown. */
     this.flash = 0;
 
+    /* --- scrap counter ---------------------------------------------------- */
+    /** 1 -> 0 pulse when scrap lands (drives the chip's glow). */
+    this.scrapPulse = 0;
+    /** Floating "+N" readouts: { value, t } — max a handful at a time. */
+    this.scrapGains = [];
+
     this.layout();
   }
 
@@ -119,6 +128,21 @@ export class HUD {
     this.hintTimer = 0;
     this.hintDismissed = false;
     this.flash = 0;
+    this.scrapPulse = 0;
+    this.scrapGains.length = 0;
+  }
+
+  /**
+   * Scrap landed. Call on every pickup: the chip pulses and a floating "+N"
+   * drifts up out of it, because a number that silently ticks up is a number
+   * nobody notices.
+   * @param {number} value
+   */
+  notifyScrap(value) {
+    if (value <= 0) return;
+    this.scrapPulse = 1;
+    if (this.scrapGains.length >= 4) this.scrapGains.shift();
+    this.scrapGains.push({ value, t: 0 });
   }
 
   /**
@@ -154,6 +178,9 @@ export class HUD {
 
     /* ================================================== speed / drift ===== */
     this._drawSpeed(ctx, safe);
+
+    /* ================================================== scrap ============= */
+    this._drawScrap(ctx, info, safe);
 
     /* ================================================== minimap =========== */
     if (info.world) this._drawMinimap(ctx, info.world, info.camera, safe);
@@ -446,6 +473,12 @@ export class HUD {
       info.cargo ? `hold ${info.cargo.items.length} items  ${info.cargo.totalWeight}kg  load ${info.cargo.powerLoad}/s  ` +
         Object.keys(info.cargo.equipped).map((id) => `${id}:${info.cargo.equipped[id]?.name.replace(' ', '') ?? '-'}`).join(' ') : '',
       info.projectiles !== undefined ? `shells ${info.projectiles.liveCount} live  pickups ${info.pickups ?? 0}` : '',
+      info.collision ? `grid ${info.collision.grid.buckets.size} cells / ${info.collision.grid.insertCount} idx  ` +
+        `query ${info.collision.grid.lastCandidates} cand  contacts ${info.collision.lastContacts}  ` +
+        `sep ${info.collision.lastSeparations}  rams ${info.collision.ramCount}` : '',
+      info.runScrap !== undefined
+        ? `scrap ${info.runScrap} (bank ${info.scrapBank ?? 0})  loose ${info.scrap ?? 0}  blasts ${info.blasts ? info.blasts.liveCount : 0}`
+        : '',
       `cam ${info.camera.x.toFixed(0)},${info.camera.y.toFixed(0)} z${info.camera.zoom.toFixed(3)}`,
       info.input ? info.input.joystick.debugString() : '',
       `view ${vp.width}x${vp.height} @${vp.dpr.toFixed(2)}  safe-b ${safe.bottom}`,
@@ -478,6 +511,103 @@ export class HUD {
       this.hintAlpha = Math.max(0, 1 - this.hintTimer * 1.6);
     }
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.2);
+    if (this.scrapPulse > 0) this.scrapPulse = Math.max(0, this.scrapPulse - dt * 2.6);
+
+    for (let i = this.scrapGains.length - 1; i >= 0; i--) {
+      const g = this.scrapGains[i];
+      g.t += dt;
+      if (g.t >= 1.1) this.scrapGains.splice(i, 1);
+    }
+  }
+
+  /** Where the scrap chip lives (also the origin of the floating +N). */
+  _scrapChipRect(safe) {
+    return {
+      x: this.margin + safe.left,
+      y: this.margin + safe.top + this.panelHeight + 6,
+      h: 22,
+    };
+  }
+
+  /**
+   * The scrap counter: a compact chip under the gauge panel.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {object} info render info ({ runScrap, scrapBank, scrap })
+   * @param {{top:number,right:number,bottom:number,left:number}} safe
+   */
+  _drawScrap(ctx, info, safe) {
+    const p = CONFIG.palette;
+    const box = this._scrapChipRect(safe);
+    const pulse = this.scrapPulse;
+    const value = String(info.runScrap ?? 0);
+    const bank = info.scrapBank ?? 0;
+
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+
+    /* --- measure ----------------------------------------------------------- */
+    ctx.font = font(12, 800);
+    const wGlyph = ctx.measureText('◈').width;
+    ctx.font = font(9, 700);
+    const wLabel = ctx.measureText('SCRAP').width;
+    ctx.font = font(13, 800);
+    const wValue = ctx.measureText(value).width;
+    ctx.font = font(9, 600);
+    const bankText = bank > 0 ? `bank ${bank}` : '';
+    const wBank = bankText ? ctx.measureText(bankText).width + 10 : 0;
+
+    const w = 10 + wGlyph + 5 + wLabel + 8 + wValue + wBank + 10;
+    const h = box.h;
+
+    /* --- chip --------------------------------------------------------------- */
+    ctx.fillStyle = 'rgba(4, 8, 18, 0.5)';
+    roundRectPath(ctx, box.x, box.y, w, h, 7);
+    ctx.fill();
+    // The border flares gold on pickup, so the eye is pulled to the number.
+    ctx.strokeStyle = p.scrap;
+    ctx.globalAlpha = 0.25 + pulse * 0.6;
+    ctx.lineWidth = 1 + pulse;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    let cx = box.x + 10;
+    const cy = box.y + h * 0.5;
+
+    ctx.font = font(12, 800);
+    ctx.fillStyle = p.scrap;
+    ctx.globalAlpha = 0.8 + pulse * 0.2;
+    ctx.fillText('◈', cx, cy);
+    cx += wGlyph + 5;
+
+    ctx.font = font(9, 700);
+    ctx.fillStyle = p.textDim;
+    ctx.fillText('SCRAP', cx, cy);
+    cx += wLabel + 8;
+
+    ctx.font = font(13, 800);
+    ctx.fillStyle = p.scrap;
+    // A hair bigger at the moment of pickup, then it settles back.
+    ctx.fillText(value, cx, cy - pulse * 1.2);
+    cx += wValue;
+
+    if (bankText) {
+      ctx.font = font(9, 600);
+      ctx.fillStyle = p.textDim;
+      ctx.fillText(bankText, cx + 10, cy);
+    }
+
+    /* --- floating +N -------------------------------------------------------- */
+    for (let i = 0; i < this.scrapGains.length; i++) {
+      const g = this.scrapGains[i];
+      const t = g.t / 1.1; // 0..1
+      ctx.globalAlpha = (1 - t) * 0.95;
+      ctx.font = font(11 + (1 - t) * 2, 800);
+      ctx.fillStyle = p.scrap;
+      ctx.fillText(`+${g.value}`, box.x + w + 6, cy - 6 - t * 26);
+    }
+
+    ctx.restore();
   }
 
   /** Full-screen damage/alert flash, drawn over everything but the overlay. */

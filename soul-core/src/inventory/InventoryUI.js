@@ -70,6 +70,19 @@ const ICONS = {
     '<rect x="12" y="6" width="3.5" height="12" rx="1.2" fill="currentColor"/>' +
     '<circle cx="20" cy="12" r="2.6" fill="currentColor" opacity="0.9"/>' +
     '<circle cx="20" cy="12" r="1.1" fill="#fff"/></svg>',
+  // Kinetic: a fat barrel with a slug leaving it and a recoil arrow behind.
+  kinetic: '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<rect x="3" y="8" width="10" height="8" rx="1.8" fill="currentColor" opacity="0.8"/>' +
+    '<rect x="11" y="9.5" width="5" height="5" rx="1" fill="currentColor"/>' +
+    '<circle cx="19.5" cy="12" r="2.1" fill="currentColor" opacity="0.95"/>' +
+    '<path d="M3 12H1M5 9.5 3.5 8M5 14.5 3.5 16" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>' +
+    '<circle cx="19.5" cy="12" r="0.9" fill="#fff"/></svg>',
+  // Plasma: a bolt inside a shockwave — the icon IS the pitch.
+  plasma: '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.45"/>' +
+    '<circle cx="12" cy="12" r="4.5" fill="currentColor" opacity="0.3"/>' +
+    '<path d="M13.5 4 8 13h4l-1.5 7 6-9.5h-4.2z" fill="currentColor"/>' +
+    '<circle cx="12" cy="12" r="1.6" fill="#fff"/></svg>',
   capacitor: '<svg viewBox="0 0 24 24" aria-hidden="true">' +
     '<path d="M13 3 6 13h5l-1 8 7-10h-5l1-8z" fill="currentColor"/>' +
     '<path d="M4 20h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/></svg>',

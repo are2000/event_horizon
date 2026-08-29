@@ -13,6 +13,10 @@
  *
  * At 100% the core goes critical: 'ship:meltdown' is emitted once and the Game
  * switches to its game-over state.
+ *
+ * It also owns the *instant* corrosion spikes: a ramming raider injects a chunk
+ * of decay on contact (`ship:rammed`), which is what makes being boarded
+ * expensive even when you have hull to spare.
  */
 import { ShipSystem } from './ShipSystem.js';
 import { CONFIG } from '../config.js';
@@ -27,6 +31,42 @@ export class CorrosionSystem extends ShipSystem {
     this.melted = false;
     /** Last step's corrosion rate, multiplier included (debug/HUD). */
     this.currentRate = 0;
+    /** Corrosion injected by rams (debug/HUD). */
+    this.rammed = 0;
+    this._offRam = null;
+  }
+
+  /** @param {import('../core/EventBus.js').EventBus} [events] */
+  onAttach(ship) {
+    this._offRam = this.events?.on('ship:rammed', (e) => this._onRam(e)) ?? null;
+  }
+
+  onDetach() {
+    if (this._offRam) this._offRam();
+    this._offRam = null;
+  }
+
+  /**
+   * A raider bit the hull: bank the decay immediately. The clamped value is
+   * picked up by update() on the very next step, so a spike that takes the
+   * core to 100% melts down exactly like a slow burn would.
+   */
+  _onRam(e) {
+    if (!this.ship || this.melted) return;
+    const amount = e.corrosion ?? 0;
+    if (amount <= 0) return;
+    this.rammed += amount;
+    this.ship.corrode(amount);
+    this.events?.emit('corrosion:spike', { ship: this.ship, amount, source: e.enemy });
+    if (this.ship.stats.coreCorrosion >= 100 && !this.melted) {
+      this.melted = true;
+      this.events?.emit('ship:meltdown', {
+        ship: this.ship,
+        time: this.age,
+        corrosion: this.ship.stats.coreCorrosion,
+        source: 'ram',
+      });
+    }
   }
 
   update(dt, ship) {
@@ -68,6 +108,7 @@ export class CorrosionSystem extends ShipSystem {
     this.melted = false;
     this._warned = false;
     this.currentRate = 0;
+    this.rammed = 0;
   }
 
   explain(stat, ship) {

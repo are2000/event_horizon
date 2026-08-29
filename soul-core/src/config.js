@@ -164,6 +164,7 @@ export const CONFIG = {
     corrosionGripPenalty: 0.45, // a decayed hull slides more
     corrosionSpeedPenalty: 0.2,
     meltdownWarning: 0.8, // HUD starts screaming at 80%
+    corrosionFxThreshold: 0.45, // the hull starts throwing purple sparks at 45%
   },
 
   /* -------------------------------------------------------------- combat -- */
@@ -171,11 +172,42 @@ export const CONFIG = {
   combat: {
     /* --- dummy targets ----------------------------------------------------- */
     enemies: {
-      count: 26,
+      count: 22,
       radius: 26,
       hull: 60,
       minDistanceFromSpawn: 700, // no target on top of the player at spawn
       respawnDelay: 6, // seconds; 0 = stays dead
+    },
+
+    /* --- scavenger fighters ------------------------------------------------ */
+    // The first thing that fights back. Slow enough that a light ship can
+    // always run, fast enough that an overloaded one cannot — which is the
+    // whole point: cargo mass is what makes them dangerous.
+    scavengers: {
+      count: 12,
+      radius: 22,
+      hull: 42,
+      // Slow enough to be called "slow" (the ship cruises at 560 wu/s), quick
+      // enough to catch you while you are turning, braking or hauling cargo.
+      speed: 250, // wu/s top speed
+      accel: 400, // wu/s^2
+      turnRate: 2.0, // rad/s — they carve, they don't pivot
+      drag: 0.6, // 1/s
+      aggroRange: 1500, // beyond this they just drift
+      weave: 0.55, // radians of sine wobble on the approach
+      weaveRate: 1.6, // Hz
+      respawnDelay: 9, // they come back, but further out
+      respawnMinDistance: 1300, // ...never on top of you
+      obstacleAvoid: 260, // start steering around rocks this far out
+
+      /* Ramming: hull AND corrosion, then both ships get shoved apart. */
+      contactDamage: 12, // hull
+      corrosionDamage: 4, // % of the Great Decay, instantly
+      knockback: 240, // wu/s impulse shoving the two hulls apart
+      ramCooldown: 1.1, // seconds before the same raider can bite again
+
+      /* Separation so a pack doesn't fuse into one blob. */
+      separation: 0.6, // strength of the mutual push-apart
     },
 
     /* --- auto targeting ---------------------------------------------------- */
@@ -234,9 +266,81 @@ export const CONFIG = {
       minDuty: 0.5, // a shell that isn't at least half powered doesn't fire
     },
 
+    /* --- kinetic cannon (slow slug, huge hit, kicks the hull) ---------------- */
+    kinetic: {
+      name: 'Kinetic',
+      range: 520,
+      damage: 85, // per slug — the biggest single hit in the game
+      shotsPerSecond: 0.9,
+      powerPerShot: 16,
+      heatPerShot: 12,
+      speed: 420, // wu/s — slow enough that leading the target matters
+      spread: 0.02,
+      projectileRadius: 9,
+      projectileLife: 1.5,
+      // Recoil, in wu/s of impulse applied opposite the muzzle. Scaled DOWN by
+      // how loaded the ship is: a heavy hauler shrugs it off, a stripped racer
+      // gets thrown around.
+      recoil: 300,
+      recoilWeightRelief: 0.5, // 0.5 => a full hold halves the kick
+      fireTolerance: 0.14, // rad — the fat slug forgives sloppy aim
+      color: '#ffb37a',
+      coreColor: '#ffe6c4',
+      minDuty: 0.6, // a half-charged slug does not fire
+    },
+
+    /* --- plasma cannon (splash damage, cooks the core) ----------------------- */
+    plasma: {
+      name: 'Plasma',
+      range: 480,
+      damage: 40, // direct hit
+      shotsPerSecond: 1.1,
+      powerPerShot: 20,
+      heatPerShot: 38, // "massive heat": ~42/s sustained, vs 11/s of cooling
+      speed: 560,
+      spread: 0.03,
+      projectileRadius: 10,
+      projectileLife: 1.3,
+      splashRadius: 130, // wu
+      splashDamage: 46, // at the centre, falling off to `splashFalloff`
+      splashFalloff: 0.35, // fraction of damage at the very edge
+      splashKnockback: 210, // wu/s shove on everything caught in it
+      fireTolerance: 0.12,
+      color: '#c56bff',
+      coreColor: '#f0d4ff',
+      minDuty: 0.6,
+    },
+
     /* --- projectiles --------------------------------------------------------- */
     projectiles: {
       capacity: 220,
+    },
+
+    /* --- collision broad-phase ---------------------------------------------- */
+    // Enemies live in a uniform grid so "what is near this shell / near the
+    // ship" is a handful of bucket reads instead of a scan of every entity.
+    collision: {
+      // Swept against the real loop: 120-180 wu measured fastest for the
+      // sector sizes we ship (a 260 wu cell lets a whole raider pack pile into
+      // one bucket, which defeats the point).
+      cellSize: 140, // wu
+    },
+  },
+
+  /* -------------------------------------------------------------- economy -- */
+  // Scrap is the run currency: enemies drop it, you fly over it, it banks when
+  // the run ends. (A place to SPEND it is the next phase.)
+  economy: {
+    scrap: {
+      min: 3, // per scavenger kill
+      max: 7,
+      dummyBonus: 1, // dummies are worth a token amount
+      magnetRange: 240, // wu — inside this it flies to you
+      magnetAccel: 1500, // wu/s^2
+      pickupRange: 46, // wu — collection happens inside this
+      lifetime: 60, // seconds before it decays into the void
+      maxEntities: 60, // hard cap on live scrap
+      driftSpeed: 40, // wu/s of initial scatter
     },
   },
 
@@ -302,6 +406,8 @@ export const CONFIG = {
     gaugeCritical: '#ff3b5c', // redline / danger
 
     weight: '#8bd450', // mass readout
+    scrap: '#ffc857', // scrap shards + the counter
+    blast: '#ffb37a', // explosion rings
     text: '#cfe0ff',
     textDim: 'rgba(207, 224, 255, 0.5)',
     barBg: 'rgba(255, 255, 255, 0.08)',

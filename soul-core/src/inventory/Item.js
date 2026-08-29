@@ -13,6 +13,9 @@
 import { CONFIG } from '../config.js';
 import { getDef, tierValue, round1, TIER_SCALE } from './ItemDefs.js';
 
+/** Weapons that throw something (and therefore share one stat block). */
+const BALLISTIC = new Set(['cannon', 'kinetic', 'plasma']);
+
 export class Item {
   static _nextUid = 1;
 
@@ -111,7 +114,7 @@ export class Item {
     };
 
     if (d.kind === 'weapon') {
-      if (d.weaponType === 'cannon') {
+      if (BALLISTIC.has(d.weaponType)) {
         const damage = tierValue(d.damage ?? 0, t, TIER_SCALE.damage);
         const rate = tierValue(d.rate ?? 1, t, TIER_SCALE.rate);
         s.damage = round1(damage);
@@ -122,6 +125,18 @@ export class Item {
         s.heat = round1(tierValue(d.heatPerShot ?? 0, t, TIER_SCALE.heat) * rate);
         s.powerPerShot = round1(tierValue(d.powerPerShot ?? 0, t, TIER_SCALE.power));
         s.heatPerShot = round1(tierValue(d.heatPerShot ?? 0, t, TIER_SCALE.heat));
+        s.speed = d.speed;
+        s.spread = d.spread;
+        // Kinetic: the muzzle impulse that shoves the ship.
+        if (d.recoil) s.recoil = round1(tierValue(d.recoil, t, TIER_SCALE.recoil));
+        // Plasma: the blast. Damage scales like any other damage; the RADIUS
+        // scales faster, because a bigger blast is the whole fantasy.
+        if (d.splashRadius) {
+          s.splashRadius = Math.round(tierValue(d.splashRadius, t, TIER_SCALE.splash));
+          s.splashDamage = round1(tierValue(d.splashDamage ?? 0, t, TIER_SCALE.damage));
+          // Splash is the real damage dealer — quote it in the DPS figure.
+          s.dps = round1((damage + s.splashDamage * 0.7) * rate);
+        }
       } else {
         s.dps = round1(tierValue(d.dps ?? 0, t, TIER_SCALE.damage));
         s.powerDraw = round1(tierValue(d.powerDraw ?? 0, t, TIER_SCALE.power));
@@ -194,16 +209,25 @@ export class Item {
       coreColor: '#ffffff',
       fireTolerance: CONFIG.combat[d.weaponType]?.fireTolerance ?? 0.1,
     };
-    if (d.weaponType === 'cannon') {
+    if (BALLISTIC.has(d.weaponType)) {
+      const cfg = CONFIG.combat[d.weaponType] ?? {};
       return {
         ...base,
         damage: s.damage,
         shotsPerSecond: s.rate,
         powerPerShot: s.powerPerShot,
         heatPerShot: s.heatPerShot,
-        speed: d.speed,
-        spread: d.spread,
-        coreColor: '#fff3c4',
+        speed: s.speed ?? cfg.speed,
+        spread: s.spread ?? cfg.spread,
+        projectileLife: cfg.projectileLife,
+        recoil: s.recoil ?? cfg.recoil ?? 0,
+        recoilWeightRelief: cfg.recoilWeightRelief ?? 0,
+        splashRadius: s.splashRadius ?? 0,
+        splashDamage: s.splashDamage ?? 0,
+        splashFalloff: cfg.splashFalloff ?? 0.35,
+        splashKnockback: s.splashKnockback ?? cfg.splashKnockback ?? 0,
+        coreColor: cfg.coreColor ?? '#ffffff',
+        minDuty: cfg.minDuty,
       };
     }
     return {
@@ -225,7 +249,10 @@ export class Item {
       lines.push(['DRAW', `${s.powerDraw}/s`]);
       lines.push(['HEAT', `${s.heat}/s`]);
       lines.push(['RANGE', String(s.range)]);
-      if (this.def.weaponType === 'cannon') lines.push(['RATE', `${s.rate}/s`]);
+      if (BALLISTIC.has(this.def.weaponType)) lines.push(['RATE', `${s.rate}/s`]);
+      // The two new guns advertise what makes them special.
+      if (s.splashRadius) lines.push(['BLAST', String(s.splashRadius)]);
+      if (s.recoil) lines.push(['KICK', String(s.recoil)]);
     } else if (s.bonus) {
       for (const key in s.bonus) {
         lines.push([BONUS_LABELS[key] ?? key, `+${s.bonus[key]}`]);

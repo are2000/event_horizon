@@ -52,13 +52,15 @@ function boot() {
   //   SoulCore.ship.generateHeat(120)        -> overheat penalties
   //   SoulCore.ship.consumePower(100)        -> brownout
   //   SoulCore.ship.stats.coreCorrosion = 99 -> meltdown next tick
-  //   SoulCore.inventory.addDef('laser', 3)  -> drop a T3 laser in the hold
+  //   SoulCore.inventory.addDef('plasma', 2) -> drop a T2 plasma in the hold
   //   SoulCore.inventory.debugString()       -> hold / mass / load / hardpoints
   //   SoulCore.openInventory()               -> the cargo hold (or press I)
+  //   SoulCore._debugSpawnRaider(200)        -> a live raider, 200wu out
+  //   SoulCore.scrap / runScrap / scrapBank  -> the economy
   window.SoulCore = game;
 
   console.info(
-    '%cSoul Core: The Great Decay%c phase 4 ready — %dx%d @%s',
+    '%cSoul Core: The Great Decay%c phase 5 ready — %dx%d @%s',
     'color:#35e0ff;font-weight:bold',
     'color:#cfe0ff',
     game.viewport.width,

@@ -13,6 +13,20 @@
  * A shell is fired only if the capacitor can actually pay for it: below
  * `minDuty` the trigger is refused and the gun tries again shortly after, which
  * reads as the gun stuttering on a flat battery rather than firing blanks.
+ *
+ * ============================================================================
+ * THE BALLISTIC FAMILY
+ * ============================================================================
+ * This class is the base for every gun that throws something:
+ *
+ *   CannonWeapon  'shell'    fast, medium damage, no frills
+ *   KineticCannon 'slug'     slow, huge damage, RECOIL — it shoves the hull
+ *   PlasmaCannon  'plasma'   splash damage, and it cooks the core that fired it
+ *
+ * The differences are pure data (see CONFIG.combat.cannon / .kinetic / .plasma)
+ * plus what each shell carries into ProjectilePool. Subclasses pick their
+ * config block via a static `defaults` getter, so there is no duplicated
+ * constructor code.
  */
 import { CONFIG } from '../config.js';
 import { Weapon } from './Weapon.js';
@@ -21,10 +35,20 @@ import { damp } from '../core/MathUtils.js';
 export class CannonWeapon extends Weapon {
   static id = 'cannon';
 
+  /** Registry key of the config block this gun reads. Subclasses override. */
+  static get defaults() {
+    return CONFIG.combat.cannon;
+  }
+
+  /** What ProjectilePool calls this kind of shell (render + detonation FX). */
+  static shellKind = 'shell';
+
   constructor(config = {}) {
     super({ id: CannonWeapon.id, name: 'Cannon', ...config });
 
-    const cfg = CONFIG.combat.cannon;
+    // `this.constructor` is the REAL class here, so KineticCannon gets
+    // CONFIG.combat.kinetic without restating a single line of this method.
+    const cfg = this.constructor.defaults;
     this.damage = config.damage ?? cfg.damage;
     this.shotsPerSecond = config.shotsPerSecond ?? cfg.shotsPerSecond;
     this.powerPerShot = config.powerPerShot ?? cfg.powerPerShot;
@@ -36,6 +60,23 @@ export class CannonWeapon extends Weapon {
     this.fireTolerance = config.fireTolerance ?? cfg.fireTolerance;
     this.minDuty = config.minDuty ?? cfg.minDuty;
     this.shellRadius = config.shellRadius ?? cfg.projectileRadius;
+    this.projectileLife = config.projectileLife ?? cfg.projectileLife;
+
+    /* --- what the shell carries ------------------------------------------- */
+    this.kind = config.kind ?? this.constructor.shellKind;
+
+    /* Recoil: muzzle impulse, in wu/s, applied to the SHIP. Scaled down by how
+       loaded the hauler is (`recoilWeightRelief`), because a heavy ship has
+       more inertia — the same physics that makes a loaded ship slower to
+       accelerate also makes it shrug off a big gun. */
+    this.recoil = config.recoil ?? cfg.recoil ?? 0;
+    this.recoilWeightRelief = config.recoilWeightRelief ?? cfg.recoilWeightRelief ?? 0;
+
+    /* Splash: 0 means single-target. */
+    this.splashRadius = config.splashRadius ?? cfg.splashRadius ?? 0;
+    this.splashDamage = config.splashDamage ?? cfg.splashDamage ?? 0;
+    this.splashFalloff = config.splashFalloff ?? cfg.splashFalloff ?? 0.35;
+    this.splashKnockback = config.splashKnockback ?? cfg.splashKnockback ?? 0;
 
     /** Seconds until the next shell. */
     this.cooldown = 0;
@@ -108,12 +149,26 @@ export class CannonWeapon extends Weapon {
       y: mount.muzzleY + sin * 14,
       vx, vy,
       damage: this.damage * duty,
-      life: CONFIG.combat.cannon.projectileLife,
+      life: this.projectileLife,
       color: this.color,
+      coreColor: this.coreColor,
       radius: this.shellRadius,
+      kind: this.kind,
+      splash: this.splashRadius,
+      splashDamage: this.splashDamage * duty,
+      splashFalloff: this.splashFalloff,
+      splashKnockback: this.splashKnockback,
       weapon: this,
       mount,
     });
+
+    /* --- recoil: the gun pushes the hull back ----------------------------- */
+    if (this.recoil > 0) {
+      // A loaded ship has more inertia, so it gets thrown around less.
+      const relief = 1 - this.recoilWeightRelief * ship.weightRatio;
+      const kick = this.recoil * duty * relief;
+      ship.applyImpulse(-cos * kick, -sin * kick);
+    }
 
     particles?.burst(5, {
       x: mount.muzzleX + cos * 16,

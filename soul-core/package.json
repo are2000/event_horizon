@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 8000",
-    "test": "node tools/sim.test.js && node tools/combat.test.js && node tools/inventory.test.js && node tools/boot.test.js"
+    "test": "node tools/sim.test.js && node tools/combat.test.js && node tools/inventory.test.js && node tools/combat-loop.test.js && node tools/boot.test.js"
   },
   "dependencies": {},
   "devDependencies": {}

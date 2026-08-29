@@ -26,12 +26,14 @@ import { CONFIG } from '../config.js';
  * more efficient per kilogram but absolutely harder to run.
  */
 export const TIER_SCALE = {
-  damage: 1.7, // dps (laser) and per-shot damage (cannon)
-  rate: 1.08, // shots/s (cannon)
+  damage: 1.7, // dps (laser) and per-shot damage (ballistic guns)
+  rate: 1.08, // shots/s (ballistic guns)
   weight: 1.25,
   power: 1.32, // power draw / per-shot cost
   heat: 1.28,
   range: 1.07,
+  splash: 1.45, // blast radius grows fast — that's what you're merging for
+  recoil: 1.25, // ...but so does the kick
   bonus: 1.7, // module passive bonuses
   regen: 1.5, // flat recharge bonuses
 };
@@ -78,6 +80,54 @@ export const ITEM_DEFS = {
     speed: 900, // wu/s muzzle velocity
     spread: 0.045, // radians of inaccuracy
     desc: 'Shell gun. Big hits, slow rate — and you pay the capacitor per shot.',
+  },
+
+  kinetic: {
+    id: 'kinetic',
+    name: 'Kinetic',
+    kind: 'weapon',
+    weaponType: 'kinetic',
+    size: { w: 1, h: 2 },
+    color: '#ffb37a',
+    icon: 'kinetic',
+    maxTier: MAX_TIER,
+    weight: 6,
+    range: 520,
+    // Slow, enormous, and it kicks: one slug is the biggest single hit in the
+    // game, and every shot shoves the hull backwards.
+    damage: 85, // per slug
+    rate: 0.9, // slugs/s
+    powerPerShot: 16,
+    heatPerShot: 12,
+    speed: 420, // wu/s — you have to lead the target
+    spread: 0.02,
+    recoil: 300, // wu/s of muzzle impulse, scaled down by cargo mass
+    desc: 'Slab-thrower. Slow slug, huge hit, and the recoil steers you.',
+  },
+
+  plasma: {
+    id: 'plasma',
+    name: 'Plasma',
+    kind: 'weapon',
+    weaponType: 'plasma',
+    size: { w: 1, h: 2 },
+    color: '#c56bff',
+    icon: 'plasma',
+    maxTier: MAX_TIER,
+    weight: 7,
+    range: 480,
+    // The splash is the weapon; the bolt is just the delivery. It also cooks
+    // the core that fired it, so it is a burst gun by construction.
+    damage: 40, // direct hit
+    rate: 1.1, // bolts/s
+    powerPerShot: 20,
+    heatPerShot: 38, // ~42/s sustained against 11/s of cooling
+    speed: 560,
+    spread: 0.03,
+    splashRadius: 130, // wu
+    splashDamage: 46, // at the centre, falling off toward the rim
+    splashKnockback: 210, // wu/s shove on everything it catches
+    desc: 'Detonates on impact. Clears a crowd, then redlines your core.',
   },
 
   /* ------------------------------------------------------------- modules -- */
@@ -128,6 +178,8 @@ export const ITEM_IDS = Object.keys(ITEM_DEFS);
 export const DROP_TABLE = {
   laser: 30,
   cannon: 20,
+  kinetic: 12,
+  plasma: 8, // the rarest: splash damage is a run-defining find
   capacitor: 18,
   radiator: 16,
   plating: 16,

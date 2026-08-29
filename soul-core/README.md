@@ -1,4 +1,4 @@
-# Soul Core: The Great Decay — Phase 4 (Inventory & Merge System)
+# Soul Core: The Great Decay — Phase 5 (Combat Loop)
 
 A top-down **roguelite space survival** game for **mobile portrait**, built with
 **vanilla JavaScript (ES6 classes) + HTML5 Canvas + CSS**. No frameworks, no
@@ -122,9 +122,9 @@ soul-core/
 │   ├── sim.test.js             Physics, weight, power, heat, corrosion, hull
 │   ├── combat.test.js          Mounts, arc maths, targeting, lasers, dummies
 │   ├── inventory.test.js       Items, grid, merging, equipping, drag & drop
-│   └── dom-stub.mjs            ~200-line DOM for headless UI tests
+│   ├── combat-loop.test.js     Raiders, collision, ramming, scrap, new guns
 │   ├── boot.test.js            Real Game vs stubbed DOM: input, HUD, combat, game over
-│   └── (see §8)
+│   └── dom-stub.mjs            ~200-line DOM for headless UI tests
 └── src/
     ├── main.js                 Entry point, URL params, debug handle
     ├── config.js               EVERY tunable number lives here
@@ -134,12 +134,15 @@ soul-core/
     │   ├── Camera.js           Follow, look-ahead, clamp, shake, transforms
     │   ├── Viewport.js         Canvas sizing, DPR cap, safe-area, resize chaos
     │   ├── InputManager.js     Pointer/touch/keys -> one normalised axis
+    │   ├── SpatialHash.js      Uniform-grid broad-phase (dynamic entities)
     │   ├── EventBus.js         Pub/sub so systems stay decoupled
     │   └── MathUtils.js        clamp, damp, angles, seeded RNG, canvas helpers
     ├── entities/
     │   ├── Entity.js           Base: transform, prev-transform, interpolation
     │   ├── Ship.js             Flight model + stats + ratio getters + resource API
     │   ├── Enemy.js            Dummy target + seeded field spawner
+    │   ├── Scavenger.js        Raider that chases you and tries to ram you
+    │   ├── Scrap.js            Loose currency: drifts, then flies to you
     │   └── ItemPickup.js       Salvage crate floating in the world
     ├── inventory/
     │   ├── ItemDefs.js          The equipment catalogue (pure data)
@@ -147,16 +150,20 @@ soul-core/
     │   ├── Inventory.js         5x6 grid, merge, equip slots, totals
     │   └── InventoryUI.js       DOM overlay: drag & drop, slots, tooltips
     ├── combat/
-    │   ├── WeaponMount.js      Hardpoint: local offset, arc constraint, rotation
-    │   ├── Weapon.js           Base class for anything bolted to a mount
-    │   ├── LaserWeapon.js      Continuous beam: power + heat + dps + beam FX
-    │   ├── TargetingManager.js Arc/range aware target selection
-    │   ├── CannonWeapon.js     Burst-fire shells (the second weapon family)
-    │   └── ProjectilePool.js   Fixed-size shell pool: simulate + render
+    │   ├── WeaponMount.js       Hardpoint: local offset, arc constraint, rotation
+    │   ├── Weapon.js            Base class for anything bolted to a mount
+    │   ├── LaserWeapon.js       Continuous beam: power + heat + dps + beam FX
+    │   ├── CannonWeapon.js      Base for every gun that throws something
+    │   ├── KineticCannon.js     Slow slug, huge damage, RECOIL
+    │   ├── PlasmaCannon.js      Splash damage, cooks your own core
+    │   ├── TargetingManager.js  Arc/range aware target selection
+    │   ├── ProjectilePool.js    Fixed-size shell pool: simulate + render
+    │   └── CollisionSystem.js   Broad-phase grid + separation + ramming
     ├── world/
     │   └── World.js            Seeded sector: grid, parallax stars, asteroids
     ├── fx/
-    │   └── ParticleSystem.js   Fixed-size pool (no GC in the loop)
+    │   ├── ParticleSystem.js   Fixed-size pool (no GC in the loop)
+    │   └── BlastFx.js          Expanding shockwave rings (explosions)
     ├── systems/
     │   ├── ShipSystem.js       Base class — the extension seam
     │   ├── SystemsManager.js   modifiers pipeline, gauge clamping, reset
@@ -170,7 +177,7 @@ soul-core/
     │   └── EquipmentSystem.js  Cargo hold -> ship: mass, power load, bonuses, guns
     └── ui/
         ├── VirtualJoystick.js  Canvas-drawn stick, multi-touch safe
-        └── HUD.js              The four gauge bars + GUNS row + minimap + debug
+        └── HUD.js              Gauges + scrap chip + GUNS row + minimap + debug
 ```
 
 ---
@@ -370,6 +377,8 @@ Cells are recomputed from the viewport (38–72px), so a 360×640 phone gets a
 | ---- | ---- | ------ | ---- |
 | **Laser** | 1×2 | 34 dps · 7 power/s · 13 heat/s · 3 kg | continuous beam |
 | **Cannon** | 1×2 | 30 dmg × 2/s · 9 power/shot · 10 heat/shot · 5 kg | burst shells with travel time |
+| **Kinetic** | 1×2 | 85 dmg × 0.9/s · 16 power/shot · 12 heat/shot · 6 kg | slow slug, **recoil** (see §8) |
+| **Plasma** | 1×2 | 40 + 46 splash × 1.1/s · 20 power/shot · 38 heat/shot · 7 kg | detonation, cooks the core |
 | **Capacitor** | 1×1 | +18 max charge, +2 recharge | 2 kg |
 | **Radiator** | 1×1 | +4 cooling, +8 redline | 2 kg |
 | **Plating** | 1×1 | +18 max hull | 3 kg |
@@ -377,8 +386,8 @@ Cells are recomputed from the viewport (38–72px), so a 360×640 phone gets a
 `Item` holds a `defId` + a `tier` and derives everything else in one place, so
 the number in the tooltip, the mass on the scales and the gun on the mount can
 never disagree. Per-tier growth (`TIER_SCALE`): damage ×1.7, weight ×1.25,
-power ×1.32 — climbing the ladder is more efficient per kilogram, but
-absolutely harder to run.
+power ×1.32, splash ×1.45, recoil ×1.25 — climbing the ladder is more
+efficient per kilogram, but absolutely harder to run.
 
 ### Merging
 
@@ -454,7 +463,148 @@ A `kind: 'weapon'` item needs a `weaponType` registered in `WeaponSystem`'s
 
 ---
 
-## 8. Balance knobs — `src/config.js → systems`
+## 8. The combat loop — raiders, collision, scrap
+
+Four things had to land together to make the sector feel like a fight instead
+of a shooting range: something that moves toward you, a way to decide what
+touched what, a reason to close the distance, and guns that behave differently
+enough that choosing between them is a decision.
+
+### Scavenger fighters (`src/entities/Scavenger.js`)
+
+An `Enemy` subclass that overrides exactly one method — `_behave()`. Targeting,
+arc limits, lasers, shells, hit flashes and the hull ring are all inherited, so
+the whole existing combat pipeline works on it unchanged.
+
+They steer rather than slide:
+
+```
+desired = bearing to the ship + sine wobble   (a pack drifts in as a cloud)
+angle   = rotateToward(angle, desired, turnRate * dt)   // carves, never snaps
+```
+
+**The orbit trap.** A pursuer flying at constant speed has a fixed minimum turn
+radius `r = speed / turnRate = 250 / 2.0 = 125 wu`. Pointed the wrong way, the
+closest its circle ever comes to a stationary ship is `sqrt(d² + r²) - r` — at
+200 wu out that is **116 wu**. It orbits forever and never lands a ram, which
+makes standing still completely safe. Wrong.
+
+The fix is the classic *arrival* throttle: two speed limits, whichever is
+lower.
+
+```
+turnCap  = distance * turnRate * 0.6      // never out-fly your own turning circle
+alignCap = maxSpeed * (0.35 + 0.65 * cos(bearing error))
+speedCap = clamp(min(turnCap, alignCap), 0.3 * maxSpeed, maxSpeed)
+```
+
+A raider that is pointed the wrong way slows to a third, pivots tightly, then
+drives straight in. Measured from every starting heading at 120–900 wu:
+**24/24 raiders now connect**. The weave also fades below 400 wu so the final
+approach is a straight line.
+
+They are deliberately slower than the ship (250 vs 560 wu/s). You can always
+run from a fight — you cannot run from the corrosion clock, and a loaded
+hauler cannot out-turn them. Being heavy is what makes you prey.
+
+### Collision (`src/combat/CollisionSystem.js`)
+
+Every "two things touched" question, in one place, with a uniform-grid
+broad-phase in front of it (`src/core/SpatialHash.js`):
+
+* enemies are indexed once per step; the **same grid** is then used by shells,
+  by splash queries and by the ship — one index, three consumers
+* an entity lives in the single cell containing its centre, so a multi-cell
+  query can never return duplicates: no dedupe stamps, no allocation
+* buckets are emptied with `length = 0` rather than freed, so a steady-state
+  step allocates nothing
+
+Measured on the real loop (best of 2, both sides warmed, 300 shells in flight):
+
+| Raiders in the sector | flat scan | spatial grid | |
+| --- | --- | --- | --- |
+| 50 | 0.139 ms/step | 0.141 ms/step | parity |
+| 120 | 0.260 ms/step | 0.205 ms/step | **1.27x** |
+| 240 | 0.492 ms/step | 0.355 ms/step | **1.39x** |
+
+Honest reading: at the sector sizes we ship today (~34 enemies) the two are
+within noise — a tight linear scan over 34 entities is genuinely fast. The grid
+is what keeps the cost flat as the sector grows, and it is the structure that
+lets splash queries ask "what is inside 130 wu" without walking every enemy.
+Cell size was swept (48/80/120/180/260) and 140 chosen.
+
+**Ramming** is detected here but *applied* elsewhere: the system emits
+`ship:rammed`, and the two gauges that care pick it up —
+`HullSystem` takes the hull, `CorrosionSystem` banks the decay chunk. Delete
+either system and the other keeps working.
+
+```
+contact -> 12 hull + 4% corrosion, once, then a 1.1s cooldown per raider
+        -> both hulls shoved apart (240 wu/s) + a positional de-overlap
+```
+
+Pack **separation** runs in the same pass: stacked raiders push each other
+apart, so a pack arrives as a cloud instead of fusing into one sprite.
+
+### Scrap (`src/entities/Scrap.js`, `CONFIG.economy`)
+
+Salvage crates are *gear*; scrap is a *number*. Different entities, different
+systems — scrap can gain a vacuum beam or a shop value later without ever
+touching the inventory grid.
+
+```
+wreck -> 3-7 scrap per raider -> shards scatter -> drift
+      -> inside 240 wu they fly to you -> inside 46 wu they bank
+```
+
+The magnet exists for the same reason the drag threshold on the inventory
+does: pixel-hunting with a thumb is not a game mechanic. Scrap decays after
+60 s (blinking for the last 6), caps at 60 entities, and banks into a lifetime
+total that survives death and is shown on the title and game-over screens.
+
+### Two more guns
+
+| | Kinetic Cannon | Plasma Cannon |
+| --- | --- | --- |
+| Shell | 420 wu/s **slug** — you must lead the target | 560 wu/s bolt |
+| Damage | 85 direct, single target | 40 direct **+ 46 splash** in 130 wu |
+| Rate | 0.9/s | 1.1/s |
+| Cost | 16 power, 12 heat per shot | 20 power, **38 heat** per shot |
+| Special | **recoil**: shoves the hull 300 wu/s | AoE knockback + shockwave ring |
+| Fantasy | a cannon you can steer with | clears a crowd, then redlines you |
+
+Both are `CannonWeapon` subclasses — cooldown, power gating, arc discipline and
+muzzle placement are all inherited; only the numbers and one recoil line are
+new. Adding a fifth gun is a `CONFIG.combat` block plus a registry entry.
+
+**Recoil is physics, not punishment.** The kick is scaled by how loaded the
+ship is: `kick = recoil * duty * (1 - 0.5 * weight/maxWeight)`. A stripped racer
+gets thrown around; a heavy hauler shrugs it off. Same inertia that makes cargo
+slow to accelerate also makes it steady under fire — being heavy pays you back
+for once.
+
+**Plasma is a burst weapon by construction.** ~42 heat/s against 11/s of
+cooling redlines the core in about three seconds. You get two or three shots,
+then you have to survive the cooldown.
+
+### The ship wears its corrosion
+
+Past `corrosionFxThreshold` (45%) the hull starts throwing purple sparks — 3/s
+at the threshold, ~26/s at meltdown — and the plating itself lerps toward the
+corrosion purple, with the cockpit flickering. It is the only warning attached
+to the *ship* rather than a bar at the top of the screen, so you catch it in
+peripheral vision while you are busy shooting.
+
+### New controls
+
+| Input | Action |
+| --- | --- |
+| `6` (debug) | spawn a raider 260 wu off the nose |
+| `7` (debug) | drop 10 scrap next to the ship |
+
+---
+
+## 9. Balance knobs — `src/config.js → systems`
 
 ```js
 systems: {
@@ -486,16 +636,17 @@ update(dt, ship) {
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 No dependencies, no build step — just Node:
 
 ```bash
 node tools/sim.test.js        # 58 checks: physics, weight, power, heat, corrosion, hull
 node tools/combat.test.js     # 73 checks: mounts, arc maths, targeting, lasers, dummies
-node tools/inventory.test.js  # 106 checks: items, grid, merging, equipping, drag & drop
+node tools/inventory.test.js  # 112 checks: items, grid, merging, equipping, drag & drop
+node tools/combat-loop.test.js# 90 checks: raiders, collision, ramming, scrap, new guns
 node tools/boot.test.js       # 81 checks: real Game booted vs stubbed DOM + 2D context
-npm test                      # all four (318 checks)
+npm test                      # all five (414 checks)
 ```
 
 `tools/dom-stub.mjs` is a ~200-line DOM (elements, classList, querySelector,
@@ -534,10 +685,28 @@ Coverage highlights:
 * drag & drop driven through real pointer events: move, merge, equip, swap,
   jettison, illegal-drop snap-back, live green/gold/red highlighting, and the
   tap-to-open details card
+* the spatial hash: no missed hits, no duplicates, candidates stay local, and a
+  query touches a fraction of the sector
+* raider AI: closes on the ship, never exceeds its rated speed, steers at most
+  `turnRate * dt` per step, ignores you outside aggro range, coasts when you are
+  dead, steers around asteroids, and respawns somewhere else
+* the orbit trap: raiders connect from every starting heading (the bug this
+  test caught was a pursuer circling a stationary ship forever)
+* ramming: hull + corrosion + knockback, one bite per cooldown, dummies are not
+  a threat, nothing bites outside a live run, and the broad-phase candidate list
+  is verified to be a superset of brute force
+* scrap: full bounty spilled, magnet vs drift, collection, decay, and banking
+* kinetic: slow shell, single target, recoil direction and magnitude, and a
+  loaded ship kicking less
+* plasma: everything in the blast takes damage with falloff, direct hits hurt
+  more, survivors get shoved, a ring is drawn, and sustained fire redlines the
+  core
+* decay visuals: no sparks when healthy, purple sparks when corroding, more of
+  them the worse it gets
 
 ---
 
-## 10. Status
+## 11. Status
 
 | Requirement                                                       | Status |
 | ----------------------------------------------------------------- | ------ |
@@ -561,9 +730,21 @@ Coverage highlights:
 | Equipping updates the ship on canvas + Weight and Power stats        | ✅ `EquipmentSystem` |
 | Clear valid / invalid / merge highlighting                           | ✅ gold / green / red cell states |
 | Salvage drops so the hold keeps growing                              | ✅ `ItemPickup` + `_maybeDropSalvage()` |
+| Enemy that moves toward the player                                    | ✅ `Scavenger` (seek + arrival throttle) |
+| Weapon hits reduce enemy HP                                           | ✅ lasers (beam) + shells (`ProjectilePool`) |
+| Ramming deals hull damage AND an instant corrosion chunk              | ✅ `CollisionSystem` -> `HullSystem` + `CorrosionSystem` |
+| Ram applies knockback                                                 | ✅ 240 wu/s impulse + de-overlap, 1.1s bite cooldown |
+| Enemies drop Scrap the player collects by flying over it              | ✅ `Scrap` + magnet + `CONFIG.economy` |
+| Kinetic Cannon: slow, high damage, recoil                             | ✅ `KineticCannon` (420 wu/s, 85 dmg, 300 kick) |
+| Plasma Cannon: AoE explosion, massive heat                            | ✅ `PlasmaCannon` (130 wu blast, 38 heat/shot) |
+| HUD scrap counter                                                     | ✅ chip under the gauges, pulses on pickup |
+| Ship visual state at high corrosion                                   | ✅ purple sparks + decay aura + hull tint |
+| Optimised collision (broad-phase)                                     | ✅ `SpatialHash`, shared by shells/splash/ship |
 
-### Next up (Phase 5 candidates)
-Mobile enemies (chase/strafe AI by subclassing `Enemy`) · consumables (repair,
-coolant flush) as inventory items · item rarity/affixes · run-scoped loadouts
-(gear currently survives death — the meta layer) · ship chassis that change the
-number of hardpoints · audio · real sprite atlas behind the palette.
+### Next up (Phase 6 candidates)
+A place to SPEND scrap (a shop between runs, or a meta upgrade tree — the
+economy currently has no sink) · raider variants (a fast skirmisher, a tanky
+bruiser) that subclass `Scavenger` · enemies that shoot back · consumables
+(repair, coolant flush) as inventory items · item rarity/affixes · enemy
+projectiles through the same `ProjectilePool` · audio · real sprite atlas
+behind the palette.

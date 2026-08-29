@@ -23,7 +23,10 @@
 import { CONFIG } from '../config.js';
 import { Ship } from '../entities/Ship.js';
 import { Enemy } from '../entities/Enemy.js';
+import { Scavenger } from '../entities/Scavenger.js';
+import { Scrap } from '../entities/Scrap.js';
 import { ParticleSystem } from '../fx/ParticleSystem.js';
+import { BlastFx } from '../fx/BlastFx.js';
 import { SystemsManager } from '../systems/SystemsManager.js';
 import { WeightSystem } from '../systems/WeightSystem.js';
 import { DriveSystem } from '../systems/DriveSystem.js';
@@ -35,6 +38,7 @@ import { WeaponSystem } from '../systems/WeaponSystem.js';
 import { EquipmentSystem } from '../systems/EquipmentSystem.js';
 import { TargetingManager } from '../combat/TargetingManager.js';
 import { ProjectilePool } from '../combat/ProjectilePool.js';
+import { CollisionSystem } from '../combat/CollisionSystem.js';
 import { Inventory } from '../inventory/Inventory.js';
 import { InventoryUI } from '../inventory/InventoryUI.js';
 import { Item } from '../inventory/Item.js';
@@ -119,14 +123,28 @@ export class Game {
     this.kills = 0;
     /** Shells in flight (cannons). Simulated here so they outlive their gun. */
     this.projectiles = new ProjectilePool(opts.shellCapacity);
-    /** Salvage waiting to be collected. @type {ItemPickup[]} */
+    /** Salvage crates (gear) waiting to be collected. @type {ItemPickup[]} */
     this.pickups = [];
+    /** Loose scrap (currency) waiting to be collected. @type {Scrap[]} */
+    this.scrap = [];
+    /** Scrap collected in the CURRENT run (banks when the run ends). */
+    this.runScrap = 0;
+    /** Scrap banked across runs — the score that survives death. */
+    this.scrapBank = 0;
+
+    /* --- collision + blast FX --------------------------------------------- */
+    /** Broad-phase index over the enemies + ram resolution. */
+    this.collision = new CollisionSystem();
+    /** Expanding shockwave rings for explosions. */
+    this.blasts = new BlastFx();
 
     // Shared per-step context for systems that need more than the ship.
     this.systems.context = {
       world: this.world,
       particles: this.particles,
       projectiles: this.projectiles,
+      blasts: this.blasts,
+      collision: this.collision,
       camera: this.camera,
       events: this.events,
       targeting: this.targeting,
@@ -166,12 +184,26 @@ export class Game {
     this.updateContext = {
       input: this.input,
       world: this.world,
+      ship: this.ship, // enemies need it: the Scavenger AI chases it
       particles: this.particles,
       camera: this.camera,
       events: this.events,
       systems: this.systems,
       time: 0,
       dt: 0,
+    };
+    /** One context object shared by the collision + projectile steps. */
+    this.combatCtx = {
+      ship: this.ship,
+      world: this.world,
+      enemies: this.enemies,
+      particles: this.particles,
+      blasts: this.blasts,
+      camera: this.camera,
+      events: this.events,
+      grid: this.collision.grid,
+      maxEnemyRadius: 26,
+      state: this.state,
     };
     this._renderInfo = {
       loop: this.loop,
@@ -189,6 +221,12 @@ export class Game {
       cargo: this.inventory,
       projectiles: this.projectiles,
       pickups: 0,
+      scrap: 0,
+      runScrap: 0,
+      scrapBank: 0,
+      enemies: this.enemies,
+      collision: this.collision,
+      blasts: this.blasts,
       frameDt: 0,
     };
     this._camTarget = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -220,16 +258,32 @@ export class Game {
     return this;
   }
 
-  /** (Re)populate the sector with dummy targets. */
+  /**
+   * (Re)populate the sector: stationary dummies to shoot, and scavenger
+   * raiders that shoot back. Both share the same placement maths, so the two
+   * populations never spawn inside each other (or inside a rock).
+   */
   _spawnEnemies() {
     this.enemies.length = 0; // keep the array identity: targeting watches it
-    const field = Enemy.spawnField({
+    const avoid = { x: this.world.width * 0.5, y: this.world.height * 0.5 };
+
+    const dummies = Enemy.spawnField({
       world: this.world,
       count: CONFIG.combat.enemies.count,
       seed: this.world.seed ^ 0x5bf03635,
-      avoid: { x: this.world.width * 0.5, y: this.world.height * 0.5 },
+      avoid,
     });
-    for (let i = 0; i < field.length; i++) this.enemies.push(field[i]);
+    const raiders = Scavenger.spawnField({
+      world: this.world,
+      count: CONFIG.combat.scavengers.count,
+      seed: this.world.seed ^ 0x1f2e3d4c,
+      avoid,
+      // Raiders start further out: you should always get a moment to breathe.
+      minDistanceFromSpawn: CONFIG.combat.scavengers.respawnMinDistance * 0.75,
+    });
+
+    for (let i = 0; i < dummies.length; i++) this.enemies.push(dummies[i]);
+    for (let i = 0; i < raiders.length; i++) this.enemies.push(raiders[i]);
     this.targeting.enemies = this.enemies;
     return this.enemies;
   }
@@ -291,6 +345,10 @@ export class Game {
       this.camera.addShake(2.5);
       this._maybeDropSalvage(x, y);
     });
+
+    this.events.on('enemy:destroyed', ({ x, y, enemy }) => {
+      this._dropScrap(x, y, enemy);
+    });
   }
 
   /* ============================================================== salvage == */
@@ -319,6 +377,42 @@ export class Game {
     const pickup = new ItemPickup({ x, y, item: new Item({ defId }) });
     this.pickups.push(pickup);
     return pickup;
+  }
+
+  /**
+   * Scrap is the run currency: it spills out of the wreck, drifts, then flies
+   * to the ship once you are close enough. (Salvage crates are gear; scrap is
+   * a number. Two systems, two entities — see Scrap.js.)
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {import('../entities/Enemy.js').Enemy} [enemy]
+   */
+  _dropScrap(x, y, enemy) {
+    const cfg = CONFIG.economy.scrap;
+    if (this.scrap.length >= cfg.maxEntities) return 0;
+
+    const value = Math.max(1, Math.round(enemy?.scrapValue ?? cfg.dummyBonus));
+    const cluster = Scrap.scatter({ x, y, amount: value });
+    let dropped = 0;
+    for (let i = 0; i < cluster.length && this.scrap.length < cfg.maxEntities; i++) {
+      this.scrap.push(cluster[i]);
+      dropped += cluster[i].value;
+    }
+    return dropped;
+  }
+
+  /** Bank a shard: the run counter grows, and so does the lifetime total. */
+  _collectScrap(shard) {
+    this.runScrap += shard.value;
+    this.scrapBank += shard.value;
+    this.particles.burst(8, {
+      x: shard.x, y: shard.y, speed: 170, life: 0.4,
+      size: 2.6, color: CONFIG.palette.scrap, drag: 2.6, jitter: 8,
+    });
+    this.events.emit('scrap:collected', { value: shard.value, total: this.runScrap, shard });
+    this.hud.notifyScrap(shard.value);
+    return shard.value;
   }
 
   /** Fly over a crate to collect it. */
@@ -477,6 +571,10 @@ export class Game {
     // re-applies it to the freshly-reset ship during systems.reset().
     this.pickups.length = 0;
     this.projectiles.clear();
+    this.scrap.length = 0;
+    this.blasts.clear();
+    this.collision.clear();
+    this.runScrap = 0; // banked already — see scrapBank
 
     this.hud.resetRun();
     this.runTime = 0;
@@ -503,6 +601,19 @@ export class Game {
       });
     }
     return dropped;
+  }
+
+  /** Debug helper (Digit6): drop a live raider `dist` wu from the ship. */
+  _debugSpawnRaider(dist = 260) {
+    const a = Math.random() * TAU;
+    const raider = new Scavenger({
+      x: clamp(this.ship.x + Math.cos(a) * dist, 60, this.world.width - 60),
+      y: clamp(this.ship.y + Math.sin(a) * dist, 60, this.world.height - 60),
+      angle: a,
+      world: this.world,
+    });
+    this.enemies.push(raider);
+    return raider;
   }
 
   _onKey(code) {
@@ -560,12 +671,23 @@ export class Game {
         this.ship.damage(s.maxHull * 0.25);
         this.systems.get('hull')?.events?.emit('ship:damaged', { amount: s.maxHull * 0.25, source: 'debug' });
         break;
+      case 'Digit6': // spawn a raider 260wu off the nose — test the chase
+        this._debugSpawnRaider(260);
+        break;
+      case 'Digit7': // drop 10 scrap on the spot — test the magnet/collection
+        for (const shard of Scrap.scatter({ x: this.ship.x + 90, y: this.ship.y, amount: 10 })) {
+          this.scrap.push(shard);
+        }
+        break;
       case 'Digit0': // full service
         s.heat = 0;
         s.power = s.maxPower;
         s.coreCorrosion = 0;
         s.hull = s.maxHull;
-        s.weight = 0;
+        // NOT s.weight = 0: the hold's mass is owned by the weight system and
+        // re-applied as a delta every step, so zeroing the stat behind its
+        // back desyncs the two.
+        this.core.weight.jettison(Infinity);
         this.ship.alive = true;
         break;
       default:
@@ -610,14 +732,20 @@ export class Game {
     for (let i = 0; i < this.enemies.length; i++) this.enemies[i].update(dt, this.updateContext);
     this.particles.update(dt);
 
-    /* 4b. Shells in flight + salvage. Both live in WORLD space and are
+    /* 4b. COLLISION. Runs here, after both the ship and the enemies have
+           integrated, because a ram is a question about positions that were
+           only just decided. It also rebuilds the broad-phase grid that the
+           shells below query. */
+    const cc = this.combatCtx;
+    cc.state = this.state;
+    cc.maxEnemyRadius = this.collision.maxEnemyRadius;
+    this.collision.update(dt, cc);
+
+    /* 4c. Shells in flight + salvage. Both live in WORLD space and are
            simulated here rather than by the weapon that made them. */
-    this.projectiles.update(dt, {
-      world: this.world,
-      enemies: this.enemies,
-      particles: this.particles,
-      events: this.events,
-    });
+    this.projectiles.update(dt, cc);
+    this.blasts.update(dt);
+
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const p = this.pickups[i];
       p.update(dt, this.updateContext);
@@ -629,6 +757,14 @@ export class Game {
         Math.hypot(p.x - this.ship.x, p.y - this.ship.y) <= CONFIG.inventory.pickupRadius) {
         if (this._collect(p)) this.pickups.splice(i, 1);
       }
+    }
+
+    /* 4d. Scrap: drifts, then flies to the ship, then banks. */
+    for (let i = this.scrap.length - 1; i >= 0; i--) {
+      const sc = this.scrap[i];
+      const got = sc.update(dt, this.updateContext);
+      if (got && this.state === 'playing') this._collectScrap(sc);
+      if (!sc.alive) this.scrap.splice(i, 1);
     }
 
     // 5. Camera last: it follows the ship's freshly integrated position.
@@ -669,7 +805,9 @@ export class Game {
     // Enemies sit between the rocks and the ship; beams go on top of both.
     for (let i = 0; i < this.enemies.length; i++) this.enemies[i].render(ctx, alpha);
     for (let i = 0; i < this.pickups.length; i++) this.pickups[i].render(ctx, alpha);
+    for (let i = 0; i < this.scrap.length; i++) this.scrap[i].render(ctx, alpha);
     this.projectiles.render(ctx, alpha);
+    this.blasts.render(ctx);
 
     this.particles.render(ctx);
     if (this.ship.visible) this.ship.render(ctx, alpha);
@@ -690,6 +828,9 @@ export class Game {
     this._renderInfo.kills = this.kills;
     this._renderInfo.targets = this.targeting.aliveCount;
     this._renderInfo.pickups = this.pickups.length;
+    this._renderInfo.scrap = this.scrap.length;
+    this._renderInfo.runScrap = this.runScrap;
+    this._renderInfo.scrapBank = this.scrapBank;
     this.hud.render(ctx, this._renderInfo);
 
     if (this.state === 'title') this._renderTitle(ctx, frameDt);
@@ -769,6 +910,11 @@ export class Game {
     ctx.font = font(10, 500);
     ctx.fillText('the core is already decaying — watch the purple', cx, h * 0.62 + 22);
     ctx.fillText('virtual stick · WASD on desktop · I = cargo · ` for debug', cx, h * 0.62 + 38);
+    if (this.scrapBank > 0) {
+      ctx.fillStyle = p.scrap;
+      ctx.font = font(11, 700);
+      ctx.fillText(`SCRAP BANK  ${this.scrapBank}`, cx, h * 0.62 + 60);
+    }
 
     ctx.restore();
   }
@@ -814,6 +960,13 @@ export class Game {
       `CORROSION ${stats.coreCorrosion.toFixed(0)}%   ·   HULL ${Math.max(0, stats.hull).toFixed(0)}   ·   RUN #${this.runsCompleted + 1}`,
       cx, cy + 74,
     );
+    ctx.fillStyle = p.scrap;
+    ctx.font = font(13, 700);
+    ctx.fillText(`SCRAP BANKED  ${this.runScrap}`, cx, cy + 98);
+    ctx.fillStyle = p.textDim;
+    ctx.font = font(10, 500);
+    // scrapBank is already the lifetime total (every shard adds to both).
+    ctx.fillText(`lifetime ${this.scrapBank}`, cx, cy + 114);
 
     ctx.globalAlpha = pulse;
     ctx.fillStyle = p.accent;
@@ -854,6 +1007,8 @@ export class Game {
       corrosion: `${s.coreCorrosion.toFixed(1)}%`,
       weight: `${s.weight.toFixed(1)}/${s.maxWeight}`,
       thrustMul: this.systems.modifiers.thrustMul.toFixed(2),
+      scrap: `${this.runScrap} (+${this.scrapBank} banked)`,
+      raiders: this.enemies.filter((e) => e.enemyType === 'scavenger' && e.alive).length,
     };
   }
 

@@ -6,8 +6,9 @@
  * manager has something to find and the lasers have something to cut.
  *
  * It is still a full Entity (transform, radius, hull, damage events), so the
- * hunters, drones and bosses of Phase 4 can subclass it rather than replace
- * the whole combat pipeline.
+ * hunters, drones and bosses can subclass it rather than replace the whole
+ * combat pipeline — see `Scavenger`, which overrides one method (`_behave`)
+ * to turn this practice dummy into something that flies at you.
  *
  * Dummies respawn after `CONFIG.combat.enemies.respawnDelay` seconds so you
  * can test targeting indefinitely without restarting the run.
@@ -31,6 +32,11 @@ export class Enemy extends Entity {
       angle: opts.angle ?? 0,
       radius: opts.radius ?? cfg.radius,
     });
+
+    /** 'dummy' | 'scavenger' — lets tests and code pick a flavour. */
+    this.enemyType = opts.enemyType ?? 'dummy';
+    /** Scrap this enemy is worth when it dies (see CONFIG.economy.scrap). */
+    this.scrapValue = opts.scrapValue ?? CONFIG.economy.scrap.dummyBonus;
 
     this.maxHull = opts.hull ?? cfg.hull;
     this.hull = this.maxHull;
@@ -84,6 +90,16 @@ export class Enemy extends Entity {
       return;
     }
 
+    this._behave(dt, ctx);
+  }
+
+  /**
+   * What this enemy DOES while alive. The base class is the practice dummy:
+   * it turns slowly on the spot. Subclasses override this and nothing else.
+   * @param {number} dt
+   * @param {object} ctx shared update context ({ ship, world, ... })
+   */
+  _behave(dt, ctx) {
     this.angle += this.spin * dt;
   }
 
@@ -181,14 +197,19 @@ export class Enemy extends Entity {
    * @param {number} [opts.count]
    * @param {number} [opts.seed]
    * @param {{x:number,y:number}} [opts.avoid] keep clear of the player's start
+   * @param {typeof Enemy} [opts.Class] subclass to instantiate (Scavenger uses
+   *        this to share the placement maths without duplicating it)
+   * @param {number} [opts.minDistanceFromSpawn] override the dummy default
    * @returns {Enemy[]}
    */
   static spawnField(opts) {
+    const Cls = opts.Class ?? Enemy;
     const cfg = CONFIG.combat.enemies;
     const world = opts.world;
     const count = opts.count ?? cfg.count;
     const avoid = opts.avoid ?? { x: world.width * 0.5, y: world.height * 0.5 };
     const rng = createRng(opts.seed ?? world.seed ^ 0x9e3779b9);
+    const minDist = opts.minDistanceFromSpawn ?? cfg.minDistanceFromSpawn;
 
     const out = [];
     const scratch = [];
@@ -202,7 +223,7 @@ export class Enemy extends Entity {
       if (rng() < 0.45) {
         // Ring around the drop point: instant target practice.
         const a = rng() * TAU;
-        const d = cfg.minDistanceFromSpawn + rng() * 900;
+        const d = minDist + rng() * 900;
         x = avoid.x + Math.cos(a) * d;
         y = avoid.y + Math.sin(a) * d;
       } else {
@@ -212,7 +233,7 @@ export class Enemy extends Entity {
 
       x = clamp(x, 60, world.width - 60);
       y = clamp(y, 60, world.height - 60);
-      if (Math.hypot(x - avoid.x, y - avoid.y) < cfg.minDistanceFromSpawn) continue;
+      if (Math.hypot(x - avoid.x, y - avoid.y) < minDist) continue;
 
       // Never inside an asteroid.
       const near = world.queryNearby(x, y, cfg.radius + world.maxObstacleRadius, scratch);
@@ -236,7 +257,7 @@ export class Enemy extends Entity {
       }
       if (tooClose) continue;
 
-      out.push(new Enemy({ x, y, angle: rng() * TAU, spin: (rng() - 0.5) * 0.7 }));
+      out.push(new Cls({ x, y, angle: rng() * TAU, spin: (rng() - 0.5) * 0.7 }));
     }
 
     return out;

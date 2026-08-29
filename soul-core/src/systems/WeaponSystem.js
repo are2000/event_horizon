@@ -20,11 +20,23 @@ import { ShipSystem } from './ShipSystem.js';
 import { WeaponMount } from '../combat/WeaponMount.js';
 import { LaserWeapon } from '../combat/LaserWeapon.js';
 import { CannonWeapon } from '../combat/CannonWeapon.js';
+import { KineticCannon } from '../combat/KineticCannon.js';
+import { PlasmaCannon } from '../combat/PlasmaCannon.js';
 
-/** Weapon registry: config name -> class. Add new weapon types here. */
+/**
+ * Weapon registry: config name -> class. Adding a gun is one entry here plus
+ * a block in CONFIG.combat — nothing in this file changes.
+ *
+ *   laser   continuous beam, paid per second
+ *   cannon  fast shells, paid per shot
+ *   kinetic slow slugs, huge damage, RECOIL
+ *   plasma  splash damage, cooks the core
+ */
 const WEAPON_TYPES = {
   laser: LaserWeapon,
   cannon: CannonWeapon,
+  kinetic: KineticCannon,
+  plasma: PlasmaCannon,
 };
 
 export class WeaponSystem extends ShipSystem {
