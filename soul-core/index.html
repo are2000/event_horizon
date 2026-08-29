@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+
+  <!--
+    Mobile-first viewport:
+    - width=device-width  : use the real device width (no 980px fallback layout)
+    - initial/min/max = 1 + user-scalable=no : kill double-tap & pinch zoom
+    - viewport-fit=cover  : let the canvas run under iOS notch / home indicator
+  -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+
+  <meta name="theme-color" content="#05060a" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Soul Core: The Great Decay - a top-down roguelite space survival game." />
+
+  <!--
+    Installable: "Add to Home Screen" gives a full-screen, chromeless icon so
+    the game runs like an app instead of a tab (no URL bar to swipe by
+    accident mid-run). Placeholder icons until real art lands.
+  -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="apple-mobile-web-app-title" content="Soul Core" />
+
+  <title>Soul Core: The Great Decay</title>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- #app is a fixed, full-viewport stage. The canvas is sized in JS (CSS px * DPR). -->
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <!--
+      DOM UI layer. The game itself is all canvas, but the cargo hold is a
+      drag-and-drop surface — hit testing, hit slop and accessibility make DOM
+      the right tool for it. InventoryUI builds everything inside this element.
+    -->
+    <div id="ui-layer"></div>
+
+    <!-- Shown if the module bundle fails to boot (missing server, parse error, ...). -->
+    <div id="fatal" hidden>
+      <h1>Soul Core failed to start</h1>
+      <p id="fatal-msg"></p>
+
+      <!-- Shown only when the page is opened from disk AND still uses ES
+           modules: browsers block those on file:// (CORS), so no amount of
+           reloading will help. Point at the one build that does work offline. -->
+      <p class="hint" id="fatal-hint-modules" hidden>
+        You opened <code>index.html</code> straight from disk
+        (<code>file://</code>). Browsers block ES modules there, so this page
+        can only run from a server.<br /><br />
+        <strong>No server?</strong> open
+        <a href="standalone.html">standalone.html</a> instead — the whole game
+        in one self-contained file.
+      </p>
+
+      <!-- Shown when the self-contained build fails from disk: file:// is
+           legal for it, so this is a different problem. -->
+      <p class="hint" id="fatal-hint-standalone" hidden>
+        This build is self-contained, so <code>file://</code> should work —
+        try reloading, or open it over http(s) if your browser keeps blocking
+        it.
+      </p>
+
+      <p class="hint" id="fatal-hint-http" hidden>
+        Something went wrong while starting. Reload; if it keeps happening,
+        the browser console has the details.
+      </p>
+
+      <div class="fatal-actions">
+        <button id="fatal-reload" type="button">Reload</button>
+        <button id="fatal-dismiss" class="ghost" type="button">Play anyway</button>
+        <button id="fatal-copy" class="ghost" type="button">Copy error</button>
+      </div>
+    </div>
+  </div>
+
+  <noscript>
+    <p style="color:#cfe0ff;font:14px monospace;padding:16px">
+      Soul Core: The Great Decay needs JavaScript enabled.
+    </p>
+  </noscript>
+
+  <!--
+    ES modules give us real file-level modularity with zero build step.
+    NOTE: modules require an http(s) origin - opening index.html via file://
+    will be blocked by CORS. Any static server works (see README.md).
+  -->
+  <script>
+    /**
+     * Surface boot failures instead of a silent black screen — and tell the
+     * player *which* failure it is, because "ES modules do not run from
+     * file://" is only true for the modular build.
+     */
+    (function () {
+      var box = document.getElementById('fatal');
+      var msg = document.getElementById('fatal-msg');
+      var hints = {
+        modules: document.getElementById('fatal-hint-modules'),
+        standalone: document.getElementById('fatal-hint-standalone'),
+        http: document.getElementById('fatal-hint-http'),
+      };
+      var shown = false;
+      var lastError = 'Unknown error';
+
+      /** True when this copy still loads ES modules (standalone.html does not). */
+      function usesModules() {
+        return !!document.querySelector('script[type="module"]');
+      }
+
+      /**
+       * The panel is for a game that never started — never for a game that is
+       * running. Hosts like raw.githack inject their own scripts, and a
+       * resource error from THOSE used to cover a perfectly healthy game with
+       * "failed to start".
+       */
+      function booted() {
+        return !!window.__soulcoreBooted || !!(window.SoulCore && window.SoulCore.state);
+      }
+
+      function show(text) {
+        if (!box || shown) return;
+        if (booted()) {
+          console.warn('[SoulCore] non-fatal error after boot:', text);
+          return;
+        }
+        shown = true;
+        box.hidden = false;
+        lastError = String(text || 'Unknown error');
+        if (msg) msg.textContent = lastError;
+
+        var isFile = location.protocol === 'file:';
+        var which = !isFile ? 'http' : (usesModules() ? 'modules' : 'standalone');
+        for (var key in hints) if (hints[key]) hints[key].hidden = key !== which;
+      }
+
+      /**
+       * Is this error from OUR code? A host like raw.githack injects scripts
+       * from its own origin; when one of those throws, the browser reports an
+       * ErrorEvent with an EMPTY message ("Script error.") and a foreign
+       * filename, because it will not leak another origin's details. That is
+       * how the panel ended up saying "Unknown error" over a running game.
+       */
+      function isOurs(e) {
+        var msg = String(e.message || '');
+        if (!msg || msg === 'Script error.') return false; // cross-origin: no details
+        var f = e.filename || '';
+        if (!f) return true; // no source given, but it did carry a message
+        try {
+          return new URL(f, location.href).origin === location.origin;
+        } catch (err) {
+          return f.indexOf(location.href) === 0;
+        }
+      }
+
+      window.addEventListener('error', function (e) {
+        // Only a real exception is fatal. A resource error (e.target is an
+        // element, e.message undefined) means something ELSE on the page —
+        // an injected banner, a blocked favicon — failed to load.
+        var isException = (typeof ErrorEvent !== 'undefined' && e instanceof ErrorEvent) ||
+          (typeof e.message === 'string' && e.message.length > 0);
+        if (!isException) {
+          console.warn('[SoulCore] a resource failed to load, ignoring:', e.target && (e.target.src || e.target.href));
+          return;
+        }
+        if (!isOurs(e)) {
+          console.warn('[SoulCore] error from another origin (host script?), ignoring:', e.filename || '(no file)');
+          return;
+        }
+        var text = e.message || 'Unknown error';
+        if (e.filename) text += ' @ ' + e.filename + (e.lineno ? ':' + e.lineno : '');
+        show(text);
+      }, true);
+
+      var reload = document.getElementById('fatal-reload');
+      if (reload) reload.addEventListener('click', function () { location.reload(); });
+
+      // If the game is fine behind a false alarm, let the player through.
+      var dismiss = document.getElementById('fatal-dismiss');
+      if (dismiss) dismiss.addEventListener('click', function () { box.hidden = true; shown = false; });
+
+      // Copy the message: it is the only way to get a real error out of a
+      // phone where nobody can open the console.
+      var copy = document.getElementById('fatal-copy');
+      if (copy) copy.addEventListener('click', function () {
+        var text = lastError;
+        var done = function () { copy.textContent = 'Copied ✓'; };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+        } else {
+          fallbackCopy(text, done);
+        }
+      });
+
+      function fallbackCopy(text, done) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (err) { copy.textContent = 'Copy failed'; }
+        document.body.removeChild(ta);
+      }
+
+      // Fail fast (and accurately) instead of waiting for the loader to give up.
+      if (location.protocol === 'file:' && usesModules()) {
+        show('ES modules are blocked on file:// — this copy cannot boot from disk.');
+      }
+
+      // main.js calls this if boot() throws, so both paths share one panel.
+      window.__soulcoreShowFatal = show;
+    })();
+  </script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

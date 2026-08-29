@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ابدأ من هنا — Soul Core</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      padding: 24px; background: #05060a; color: #cfe0ff;
+      font: 16px/1.8 system-ui, "Segoe UI", Roboto, sans-serif; text-align: center;
+    }
+    .wrap { max-width: 420px; }
+    h1 { font-size: 20px; color: #35e0ff; margin: 0 0 6px; }
+    p { color: #9fb4d8; font-size: 14px; margin: 0 0 22px; }
+    .btn {
+      display: block; padding: 20px 18px; margin-bottom: 12px;
+      background: #35e0ff; color: #05060a; border: 0; border-radius: 14px;
+      font-weight: 700; font-size: 17px; text-decoration: none;
+    }
+    .btn small { display: block; font-weight: 400; font-size: 12px; opacity: .85; margin-top: 5px; }
+    .warn {
+      margin-top: 24px; padding: 12px 14px; border-radius: 12px;
+      background: #1b2740; border: 1px solid #2c3f63;
+      color: #9fb4d8; font-size: 13px; text-align: start;
+    }
+    code { color: #ffc857; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Soul Core: The Great Decay</h1>
+    <p>دوس على الزر — اللعبة هتفتح على طول، من غير إنترنت ولا سيرفر.</p>
+
+    <a class="btn" href="soul-core/standalone-debug.html">
+      ▶ العب (مع أدوات التجربة)
+      <small>أزرار GUNS / RAIDER / SCRAP / FIX على الشاشة</small>
+    </a>
+
+    <a class="btn" href="soul-core/standalone.html" style="background:#1b2740;color:#cfe0ff;border:1px solid #2c3f63">
+      ▶ العب (نسخة نظيفة)
+    </a>
+
+    <div class="warn">
+      ⚠️ <strong>ما تفتحش</strong> <code>soul-core/index.html</code> من الملفات —
+      المتصفح بيمنع تشغيل ES modules على <code>file://</code>، فهيديك شاشة
+      «Soul Core failed to start». الملفين اللي فوق دول هما اللي بيشتغلوا أوفلاين.
+    </div>
+  </div>
+</body>
+</html>
