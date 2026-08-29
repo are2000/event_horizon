@@ -702,5 +702,42 @@ frames(2); // modifiers are recomputed by the systems, not on demand
     `mass ${ui.statMass.b.textContent} load ${ui.statLoad.b.textContent}`);
 }
 
+/* ===== 9. the card and the gun must quote the same numbers ================ */
+{
+  // The tooltip, the mass on the scales and the gun on the mount are three
+  // views of one item. A tier-scaling rounding slip once made the card quote
+  // 371.3 dps for a cannon that actually fired 368.5 — this pins them together
+  // for every weapon at every tier.
+  const { ITEM_IDS, getDef, MAX_TIER } = await import('../src/inventory/ItemDefs.js');
+  game.restart();
+  frames(2);
+  let worst = 0;
+  let worstName = '';
+  const rows = [];
+  for (const defId of ITEM_IDS) {
+    if (getDef(defId).kind !== 'weapon') continue;
+    for (let tier = 1; tier <= MAX_TIER; tier++) {
+      game.inventory.clear();
+      const item = inv.addDef(defId, tier);
+      inv.unequip('left');
+      inv.equip(item, 'left');
+      frames(2);
+      const weapon = game.core.weapons.left.weapon;
+      if (!weapon) { rows.push(`${defId} T${tier}: NO WEAPON BUILT`); continue; }
+      const d = Math.abs(weapon.dps - item.stats.dps);
+      if (d > worst) { worst = d; worstName = `${defId} T${tier} card ${item.stats.dps} vs gun ${weapon.dps}`; }
+      // The power/heat the gun will actually spend must match the card too.
+      const draw = Math.abs((weapon.powerDraw ?? 0) - item.stats.powerDraw);
+      const heat = Math.abs((weapon.heatGain ?? 0) - item.stats.heat);
+      if (draw > 0.15 || heat > 0.15) {
+        rows.push(`${defId} T${tier} draw ${weapon.powerDraw} vs ${item.stats.powerDraw}, heat ${weapon.heatGain} vs ${item.stats.heat}`);
+      }
+    }
+  }
+  check('every weapon card quotes the dps the mounted gun actually does',
+    worst < 0.11, worstName || 'exact');
+  check('...and the same power draw and heat', rows.length === 0, rows.slice(0, 2).join(' | '));
+}
+
 console.log(`\n${failures === 0 ? 'ALL GREEN' : failures + ' FAILURE(S)'}`);
 process.exit(failures ? 1 : 0);

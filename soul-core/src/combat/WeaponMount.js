@@ -194,6 +194,7 @@ export class WeaponMount {
         // Projectile weapons spawn into the shared pool; it must be forwarded
         // every step or a cannon pays for shells that never exist.
         projectiles: ctx.projectiles,
+        camera: ctx.camera,
         events: ctx.events,
         time: ctx.time,
       });

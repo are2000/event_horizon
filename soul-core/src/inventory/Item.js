@@ -115,16 +115,18 @@ export class Item {
 
     if (d.kind === 'weapon') {
       if (BALLISTIC.has(d.weaponType)) {
-        const damage = tierValue(d.damage ?? 0, t, TIER_SCALE.damage);
-        const rate = tierValue(d.rate ?? 1, t, TIER_SCALE.rate);
-        s.damage = round1(damage);
-        s.rate = round1(rate);
-        s.dps = round1(damage * rate);
-        // Sustained draw, so the inventory panel can compare unlike guns.
-        s.powerDraw = round1(tierValue(d.powerPerShot ?? 0, t, TIER_SCALE.power) * rate);
-        s.heat = round1(tierValue(d.heatPerShot ?? 0, t, TIER_SCALE.heat) * rate);
+        // Round FIRST, then derive: the weapon is built from the rounded
+        // damage/rate (see weaponConfig), so deriving DPS and sustained draw
+        // from the unrounded values made the tooltip quote 371.3 dps for a gun
+        // that actually fired 368.5. One source of truth, rounded once.
+        s.damage = round1(tierValue(d.damage ?? 0, t, TIER_SCALE.damage));
+        s.rate = round1(tierValue(d.rate ?? 1, t, TIER_SCALE.rate));
         s.powerPerShot = round1(tierValue(d.powerPerShot ?? 0, t, TIER_SCALE.power));
         s.heatPerShot = round1(tierValue(d.heatPerShot ?? 0, t, TIER_SCALE.heat));
+        s.dps = round1(s.damage * s.rate);
+        // Sustained draw, so the inventory panel can compare unlike guns.
+        s.powerDraw = round1(s.powerPerShot * s.rate);
+        s.heat = round1(s.heatPerShot * s.rate);
         s.speed = d.speed;
         s.spread = d.spread;
         // Kinetic: the muzzle impulse that shoves the ship.
@@ -134,8 +136,11 @@ export class Item {
         if (d.splashRadius) {
           s.splashRadius = Math.round(tierValue(d.splashRadius, t, TIER_SCALE.splash));
           s.splashDamage = round1(tierValue(d.splashDamage ?? 0, t, TIER_SCALE.damage));
+          s.splashKnockback = Math.round(tierValue(d.splashKnockback ?? 0, t, TIER_SCALE.splash));
           // Splash is the real damage dealer — quote it in the DPS figure.
-          s.dps = round1((damage + s.splashDamage * 0.7) * rate);
+          // 0.7 is the same weighting PlasmaCannon.dps uses, so the card and
+          // the gun agree.
+          s.dps = round1((s.damage + s.splashDamage * 0.7) * s.rate);
         }
       } else {
         s.dps = round1(tierValue(d.dps ?? 0, t, TIER_SCALE.damage));
@@ -225,7 +230,7 @@ export class Item {
         splashRadius: s.splashRadius ?? 0,
         splashDamage: s.splashDamage ?? 0,
         splashFalloff: cfg.splashFalloff ?? 0.35,
-        splashKnockback: s.splashKnockback ?? cfg.splashKnockback ?? 0,
+        splashKnockback: s.splashKnockback ?? 0,
         coreColor: cfg.coreColor ?? '#ffffff',
         minDuty: cfg.minDuty,
       };

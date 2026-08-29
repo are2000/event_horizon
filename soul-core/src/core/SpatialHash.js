@@ -82,9 +82,25 @@ export class SpatialHash {
 
   /* -------------------------------------------------------------- mutation -- */
 
-  /** Empty every bucket WITHOUT freeing them (no garbage per step). */
+  /**
+   * Empty every bucket WITHOUT freeing them (no garbage per step).
+   *
+   * Buckets that nothing was inserted into last step are RELEASED back to the
+   * pool. Without this, a raider that crosses the sector leaves a permanent
+   * bucket behind for every cell it ever touched, and `clear()` is O(buckets)
+   * every step — a five-minute run watched the map grow 34 -> 300+ cells that
+   * are then iterated 120 times a second for the rest of the run. Pruning
+   * keeps the map proportional to what is actually occupied right now.
+   */
   clear() {
-    for (const b of this.buckets.values()) if (b.length) b.length = 0;
+    for (const [key, b] of this.buckets) {
+      if (b.length === 0) {
+        this.buckets.delete(key);
+        this._pool.push(b);
+      } else {
+        b.length = 0;
+      }
+    }
     this.insertCount = 0;
     this.bucketCount = 0;
     this.maxBucketDepth = 0;

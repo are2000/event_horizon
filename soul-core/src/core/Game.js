@@ -738,8 +738,10 @@ export class Game {
            shells below query. */
     const cc = this.combatCtx;
     cc.state = this.state;
-    cc.maxEnemyRadius = this.collision.maxEnemyRadius;
     this.collision.update(dt, cc);
+    // Read AFTER the collision pass: it recomputes the widest enemy radius
+    // while indexing, and the shells below use it as their query margin.
+    cc.maxEnemyRadius = this.collision.maxEnemyRadius;
 
     /* 4c. Shells in flight + salvage. Both live in WORLD space and are
            simulated here rather than by the weapon that made them. */
@@ -1007,7 +1009,7 @@ export class Game {
       corrosion: `${s.coreCorrosion.toFixed(1)}%`,
       weight: `${s.weight.toFixed(1)}/${s.maxWeight}`,
       thrustMul: this.systems.modifiers.thrustMul.toFixed(2),
-      scrap: `${this.runScrap} (+${this.scrapBank} banked)`,
+      scrap: `${this.runScrap} this run / ${this.scrapBank} lifetime`,
       raiders: this.enemies.filter((e) => e.enemyType === 'scavenger' && e.alive).length,
     };
   }

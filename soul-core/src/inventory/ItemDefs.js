@@ -101,7 +101,10 @@ export const ITEM_DEFS = {
     heatPerShot: 12,
     speed: 420, // wu/s — you have to lead the target
     spread: 0.02,
-    recoil: 300, // wu/s of muzzle impulse, scaled down by cargo mass
+    // Read from CONFIG, not restated: the tier ladder scales THIS number, so a
+    // duplicate here silently made a T4 gun kick 586 wu/s while the config
+    // (which is what a bare `new KineticCannon()` uses) still said 300.
+    recoil: CONFIG.combat.kinetic.recoil, // wu/s of muzzle impulse, scaled down by cargo mass
     desc: 'Slab-thrower. Slow slug, huge hit, and the recoil steers you.',
   },
 

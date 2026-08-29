@@ -570,7 +570,7 @@ total that survives death and is shown on the title and game-over screens.
 | Damage | 85 direct, single target | 40 direct **+ 46 splash** in 130 wu |
 | Rate | 0.9/s | 1.1/s |
 | Cost | 16 power, 12 heat per shot | 20 power, **38 heat** per shot |
-| Special | **recoil**: shoves the hull 300 wu/s | AoE knockback + shockwave ring |
+| Special | **recoil**: 110 wu/s shove + a camera kick | AoE knockback + shockwave ring |
 | Fantasy | a cannon you can steer with | clears a crowd, then redlines you |
 
 Both are `CannonWeapon` subclasses — cooldown, power gating, arc discipline and
@@ -582,6 +582,16 @@ ship is: `kick = recoil * duty * (1 - 0.5 * weight/maxWeight)`. A stripped racer
 gets thrown around; a heavy hauler shrugs it off. Same inertia that makes cargo
 slow to accelerate also makes it steady under fire — being heavy pays you back
 for once.
+
+Two notes from tuning it. First, the hull is nearly frictionless by design
+(that's the drift feel), so an impulse here is really measured in *distance*:
+`v / 0.22` wu of coasting. At the original 300 a two-shot burst threw the ship
+1250 wu backwards — out of its own firing range, so the gun went quiet. It is
+110 now (about 300 wu per shot): obvious, correctable with the stick, and it no
+longer takes the gun out of the fight. Half of what you *feel* is the camera
+kick instead. Second, the base value lives in `CONFIG.combat.kinetic.recoil` and
+`ITEM_DEFS.kinetic` reads it from there — a copy once drifted, and a T4 gun
+quietly kicked 586 wu/s while the config still said 300.
 
 **Plasma is a burst weapon by construction.** ~42 heat/s against 11/s of
 cooling redlines the core in about three seconds. You get two or three shots,
@@ -643,10 +653,10 @@ No dependencies, no build step — just Node:
 ```bash
 node tools/sim.test.js        # 58 checks: physics, weight, power, heat, corrosion, hull
 node tools/combat.test.js     # 73 checks: mounts, arc maths, targeting, lasers, dummies
-node tools/inventory.test.js  # 112 checks: items, grid, merging, equipping, drag & drop
+node tools/inventory.test.js  # 114 checks: items, grid, merging, equipping, drag & drop
 node tools/combat-loop.test.js# 90 checks: raiders, collision, ramming, scrap, new guns
 node tools/boot.test.js       # 81 checks: real Game booted vs stubbed DOM + 2D context
-npm test                      # all five (414 checks)
+npm test                      # all five (416 checks)
 ```
 
 `tools/dom-stub.mjs` is a ~200-line DOM (elements, classList, querySelector,
@@ -735,7 +745,7 @@ Coverage highlights:
 | Ramming deals hull damage AND an instant corrosion chunk              | ✅ `CollisionSystem` -> `HullSystem` + `CorrosionSystem` |
 | Ram applies knockback                                                 | ✅ 240 wu/s impulse + de-overlap, 1.1s bite cooldown |
 | Enemies drop Scrap the player collects by flying over it              | ✅ `Scrap` + magnet + `CONFIG.economy` |
-| Kinetic Cannon: slow, high damage, recoil                             | ✅ `KineticCannon` (420 wu/s, 85 dmg, 300 kick) |
+| Kinetic Cannon: slow, high damage, recoil                             | ✅ `KineticCannon` (420 wu/s, 85 dmg, 110 kick + shake) |
 | Plasma Cannon: AoE explosion, massive heat                            | ✅ `PlasmaCannon` (130 wu blast, 38 heat/shot) |
 | HUD scrap counter                                                     | ✅ chip under the gauges, pulses on pickup |
 | Ship visual state at high corrosion                                   | ✅ purple sparks + decay aura + hull tint |

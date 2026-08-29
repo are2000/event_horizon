@@ -135,6 +135,7 @@ export class WeaponSystem extends ShipSystem {
         targeting: c.targeting,
         particles: c.particles,
         projectiles: c.projectiles,
+        camera: c.camera, // big guns kick the camera as well as the hull
         events: this.events,
         reserved: this.reserved,
         time: c.time ?? 0,

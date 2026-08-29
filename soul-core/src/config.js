@@ -281,8 +281,16 @@ export const CONFIG = {
       // Recoil, in wu/s of impulse applied opposite the muzzle. Scaled DOWN by
       // how loaded the ship is: a heavy hauler shrugs it off, a stripped racer
       // gets thrown around.
-      recoil: 300,
+      //
+      // Careful: the hull is nearly frictionless by design (that's the drift
+      // feel), so an impulse here is measured in DISTANCE, not just velocity —
+      // v/0.22 wu of coasting. At 300 a two-shot burst threw the ship 1250 wu
+      // backwards, out of its own firing range. 110 shoves you about 300 wu
+      // per shot: obvious, correctable with the stick, and it no longer takes
+      // the gun out of the fight. The camera kick below sells the weight.
+      recoil: 110,
       recoilWeightRelief: 0.5, // 0.5 => a full hold halves the kick
+      recoilShake: 2.2, // screen shake on firing (the felt half of the recoil)
       fireTolerance: 0.14, // rad — the fat slug forgives sloppy aim
       color: '#ffb37a',
       coreColor: '#ffe6c4',

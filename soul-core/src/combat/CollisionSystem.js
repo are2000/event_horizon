@@ -186,12 +186,10 @@ export class CollisionSystem {
   /* ----------------------------------------------------------------- query -- */
 
   /**
-   * Candidate enemies inside a circle (superset: callers do the exact test).
-   * Shared so shells, blasts and anything else pay for the index once.
+   * The index itself is the shared API: `system.grid` is handed to the
+   * projectile pool (and anything else that needs "what is near here") so the
+   * sector is indexed once per step and every consumer pays only for queries.
    */
-  query(x, y, radius, out) {
-    return this.grid.query(x, y, radius, out);
-  }
 
   clear() {
     this.grid.clear();

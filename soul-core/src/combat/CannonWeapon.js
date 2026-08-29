@@ -71,6 +71,7 @@ export class CannonWeapon extends Weapon {
        accelerate also makes it shrug off a big gun. */
     this.recoil = config.recoil ?? cfg.recoil ?? 0;
     this.recoilWeightRelief = config.recoilWeightRelief ?? cfg.recoilWeightRelief ?? 0;
+    this.recoilShake = config.recoilShake ?? cfg.recoilShake ?? 0;
 
     /* Splash: 0 means single-target. */
     this.splashRadius = config.splashRadius ?? cfg.splashRadius ?? 0;
@@ -99,7 +100,7 @@ export class CannonWeapon extends Weapon {
    * @param {object} ctx { ship, mount, target, particles, projectiles, events }
    */
   update(dt, ctx) {
-    const { ship, mount, target, particles, projectiles } = ctx;
+    const { ship, mount, target, particles, projectiles, camera } = ctx;
     this.target = target ?? null;
 
     this.cooldown -= dt;
@@ -168,6 +169,10 @@ export class CannonWeapon extends Weapon {
       const relief = 1 - this.recoilWeightRelief * ship.weightRatio;
       const kick = this.recoil * duty * relief;
       ship.applyImpulse(-cos * kick, -sin * kick);
+      // The camera takes a bigger hit than the hull does: on a near-frictionless
+      // ship the physical shove has to stay small enough to fly through, and
+      // the shake is what actually sells the size of the gun.
+      camera?.addShake(Math.min(6, (this.recoilShake ?? 0) * duty));
     }
 
     particles?.burst(5, {
