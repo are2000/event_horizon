@@ -23,6 +23,17 @@ python3 -m http.server 8000        # then open http://localhost:8000
 **On a phone:** serve on `0.0.0.0` and open your machine's LAN IP, or use a
 tunnel (`ngrok http 8000`). Add `?debug=1` for the telemetry overlay.
 
+### One file, no server: `npm run build`
+
+```bash
+npm run build          # -> standalone.html (CSS + all modules inlined)
+```
+
+`standalone.html` is a **generated**, self-contained build: no imports, so it
+runs straight from `file://` — download it, open it from the phone's file
+manager, or drop it on any host. (Rebuild after editing `src/`; the file has no
+web manifest, so Home-Screen install needs the served `index.html`.)
+
 ### Install it on the phone (like an app)
 
 `index.html` ships a `manifest.webmanifest` + icons, so **Add to Home Screen**
@@ -32,7 +43,18 @@ art.
 
 > Note: the **GitHub mobile app cannot run the game** — it renders files, it
 > does not execute them. You need a served URL (a host, a tunnel, GitHub Pages
-> or this sandbox's preview link).
+> or this sandbox's preview link). The one exception is `standalone.html`: it is
+> a plain classic script, so a downloaded copy opens from `file://`.
+
+### Permanent link (GitHub Pages)
+
+Pages for this repo already serves the `gh-pages` branch, which hosts a
+different project at the site root — so the game is published **as a subfolder**
+by `.github/workflows/deploy-soul-core.yml` on every push to this branch:
+
+```
+https://<user>.github.io/event_horizon/soul-core/
+```
 
 ### URL parameters
 
