@@ -478,10 +478,13 @@ check('360 frames across every gauge state render cleanly', renderError === null
       getElementById: (id) => byId[id] ?? null,
       querySelector: (sel) => (modules && sel.includes('module') ? {} : null),
     };
-    const win = { addEventListener() {} };
+    const handlers = {};
+    const win = { addEventListener: (t, fn) => { (handlers[t] = handlers[t] || []).push(fn); } };
     const loc = { protocol };
     const run = () => new Function('window', 'document', 'location', guard)(win, doc, loc);
-    return { win, doc, loc, byId, run };
+    /** Fire the guard's error listener with a synthetic event. */
+    const error = (evt) => (handlers.error || []).forEach((fn) => fn(evt));
+    return { win, doc, loc, byId, run, error };
   }
 
   // file:// + ES modules: the case that used to be a silent black screen.
@@ -502,6 +505,29 @@ check('360 frames across every gauge state render cleanly', renderError === null
   d = miniDom({ protocol: 'https:', modules: true });
   d.run();
   check('http(s) does not panic on load', d.byId.fatal.hidden === true, '');
+
+  /* A resource error is NOT a dead game. Hosts like raw.githack inject their
+     own scripts, and one of those failing used to cover a healthy game with
+     "failed to start" — which is exactly what the player reported. */
+  d = miniDom({ protocol: 'https:', modules: true });
+  d.run();
+  d.error({ target: { src: 'https://example.invalid/banner.js' } });
+  check('a failed foreign resource does not show the panel', d.byId.fatal.hidden === true, '');
+
+  // A real exception still does, and says what it was.
+  d = miniDom({ protocol: 'https:', modules: true });
+  d.run();
+  d.error({ message: 'boom', filename: 'game.js', lineno: 12 });
+  check('a real exception shows the panel', d.byId.fatal.hidden === false, '');
+  check('  ...with the message attached', /boom/.test(d.byId['fatal-msg'].textContent),
+    d.byId['fatal-msg'].textContent);
+
+  // After a successful boot nothing is fatal: the game is clearly running.
+  d = miniDom({ protocol: 'https:', modules: true });
+  d.run();
+  d.win.__soulcoreBooted = true;
+  d.error({ message: 'late error' });
+  check('errors after a successful boot are never fatal', d.byId.fatal.hidden === true, '');
 }
 
 /* ------------------------------- blur safety ------------------------------- */

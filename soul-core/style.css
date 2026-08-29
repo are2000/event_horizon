@@ -874,3 +874,35 @@ body.is-hidden #game {
 #fatal-reload:active {
   background: #8bd450;
 }
+
+/* Fatal panel actions: Reload / Play anyway / Copy error. */
+.fatal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.fatal-actions button {
+  padding: 10px 16px;
+  font: inherit;
+  color: #05060a;
+  background: #35e0ff;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fatal-actions button.ghost {
+  color: #cfe0ff;
+  background: #1b2740;
+  border: 1px solid #2c3f63;
+}
+
+.fatal-actions button:active {
+  background: #8bd450;
+  color: #05060a;
+}

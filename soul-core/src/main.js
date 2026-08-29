@@ -64,6 +64,9 @@ function boot() {
   //   SoulCore.debugPad.press('Digit8')      -> same as the on-screen [GUNS] button
   //   SoulCore.scrap / runScrap / scrapBank  -> the economy
   window.SoulCore = game;
+  // Tells the fatal-panel guard that boot finished: from here on, an error is
+  // a bug to log, not a reason to cover a game that is clearly running.
+  window.__soulcoreBooted = true;
 
   console.info(
     '%cSoul Core: The Great Decay%c phase 5 ready — %dx%d @%s',

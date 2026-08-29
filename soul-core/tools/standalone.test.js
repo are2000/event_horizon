@@ -47,6 +47,8 @@ for (const build of builds) {
   check('no module script tag (this is what file:// blocks)', !/<script[^>]+type="module"/.test(html), '');
   check('carries the file:// aware fatal panel',
     html.includes('fatal-hint-standalone') && html.includes('__soulcoreShowFatal'), '');
+  check('fatal panel offers Reload / Play anyway / Copy error',
+    html.includes('fatal-dismiss') && html.includes('fatal-copy') && html.includes('fatal-reload'), '');
 
   // The debug build ships an inline flag script that runs BEFORE the bundle
   // (a file:// page cannot be given a ?debug=1 query string). Assert it is

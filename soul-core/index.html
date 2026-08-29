@@ -75,7 +75,11 @@
         the browser console has the details.
       </p>
 
-      <button id="fatal-reload" type="button">Reload</button>
+      <div class="fatal-actions">
+        <button id="fatal-reload" type="button">Reload</button>
+        <button id="fatal-dismiss" class="ghost" type="button">Play anyway</button>
+        <button id="fatal-copy" class="ghost" type="button">Copy error</button>
+      </div>
     </div>
   </div>
 
@@ -105,34 +109,84 @@
         http: document.getElementById('fatal-hint-http'),
       };
       var shown = false;
+      var lastError = 'Unknown error';
 
       /** True when this copy still loads ES modules (standalone.html does not). */
       function usesModules() {
         return !!document.querySelector('script[type="module"]');
       }
 
+      /**
+       * The panel is for a game that never started — never for a game that is
+       * running. Hosts like raw.githack inject their own scripts, and a
+       * resource error from THOSE used to cover a perfectly healthy game with
+       * "failed to start".
+       */
+      function booted() {
+        return !!window.__soulcoreBooted || !!(window.SoulCore && window.SoulCore.state);
+      }
+
       function show(text) {
         if (!box || shown) return;
+        if (booted()) {
+          console.warn('[SoulCore] non-fatal error after boot:', text);
+          return;
+        }
         shown = true;
         box.hidden = false;
-        if (msg) msg.textContent = text || 'Unknown error';
+        lastError = String(text || 'Unknown error');
+        if (msg) msg.textContent = lastError;
 
         var isFile = location.protocol === 'file:';
         var which = !isFile ? 'http' : (usesModules() ? 'modules' : 'standalone');
         for (var key in hints) if (hints[key]) hints[key].hidden = key !== which;
       }
 
-      // capture: a module that never loaded reports an error *event* on the
-      // script element, and those do not bubble — without capture we would
-      // never see it.
       window.addEventListener('error', function (e) {
-        var text = e.message || (e.target && e.target.src ? 'Failed to load ' + e.target.src : 'Unknown error');
-        if (e.filename) text += ' @ ' + e.filename;
+        // Only a real exception is fatal. A resource error (e.target is an
+        // element, e.message undefined) means something ELSE on the page —
+        // an injected banner, a blocked favicon — failed to load.
+        var isException = (typeof ErrorEvent !== 'undefined' && e instanceof ErrorEvent) ||
+          (typeof e.message === 'string' && e.message.length > 0);
+        if (!isException) {
+          console.warn('[SoulCore] a resource failed to load, ignoring:', e.target && (e.target.src || e.target.href));
+          return;
+        }
+        var text = e.message || 'Unknown error';
+        if (e.filename) text += ' @ ' + e.filename + (e.lineno ? ':' + e.lineno : '');
         show(text);
       }, true);
 
       var reload = document.getElementById('fatal-reload');
       if (reload) reload.addEventListener('click', function () { location.reload(); });
+
+      // If the game is fine behind a false alarm, let the player through.
+      var dismiss = document.getElementById('fatal-dismiss');
+      if (dismiss) dismiss.addEventListener('click', function () { box.hidden = true; shown = false; });
+
+      // Copy the message: it is the only way to get a real error out of a
+      // phone where nobody can open the console.
+      var copy = document.getElementById('fatal-copy');
+      if (copy) copy.addEventListener('click', function () {
+        var text = lastError;
+        var done = function () { copy.textContent = 'Copied ✓'; };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+        } else {
+          fallbackCopy(text, done);
+        }
+      });
+
+      function fallbackCopy(text, done) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (err) { copy.textContent = 'Copy failed'; }
+        document.body.removeChild(ta);
+      }
 
       // Fail fast (and accurately) instead of waiting for the loader to give up.
       if (location.protocol === 'file:' && usesModules()) {
