@@ -26,13 +26,18 @@ tunnel (`ngrok http 8000`). Add `?debug=1` for the telemetry overlay.
 ### One file, no server: `npm run build`
 
 ```bash
-npm run build          # -> standalone.html (CSS + all modules inlined)
+npm run build
+#   -> standalone.html        the whole game in one file
+#   -> standalone-debug.html  same, with the debug overlay + pad forced on
 ```
 
-`standalone.html` is a **generated**, self-contained build: no imports, so it
-runs straight from `file://` — download it, open it from the phone's file
-manager, or drop it on any host. (Rebuild after editing `src/`; the file has no
-web manifest, so Home-Screen install needs the served `index.html`.)
+Both are **generated** and self-contained: no imports, so they run straight
+from `file://` — download one, open it from the phone's file manager, or drop
+it on any host. (Rebuild after editing `src/`.)
+
+Use the `-debug` one when you want the debug pad: a file you just tapped cannot
+be given a `?debug=1` query string, so that build sets the flag itself. Neither
+file has a web manifest, so Home-Screen install needs the served `index.html`.
 
 ### Install it on the phone (like an app)
 

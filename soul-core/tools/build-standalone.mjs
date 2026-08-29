@@ -1,7 +1,8 @@
 /**
  * build-standalone.mjs
  * ----------------------------------------------------------------------------
- * Bundle the whole game into ONE self-contained HTML file: `standalone.html`.
+ * Bundle the whole game into ONE self-contained HTML file: `standalone.html`,
+ * plus `standalone-debug.html` (same file, debug overlay + pad forced on).
  *
  *   npm run build
  *
@@ -25,7 +26,6 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entry = path.join(root, 'src', 'main.js');
-const outFile = path.join(root, 'standalone.html');
 const tmpJs = path.join(root, '.standalone.bundle.js');
 
 function bundle() {
@@ -69,9 +69,18 @@ function main() {
   ].join('\n');
   html = html.replace('</head>', `${banner}\n</head>`);
 
-  fs.writeFileSync(outFile, html);
+  // Two flavours: clean, and one with the debug overlay + pad pre-enabled
+  // (an offline file cannot be given a ?debug=1 query string).
+  const forceDebug = '  <script>window.__SOULCORE_FORCE_DEBUG = true;</script>\n';
+  const debugBuild = html.replace('  <script>\n  /* bundled game',
+    forceDebug + '  <script>\n  /* bundled game');
+  if (debugBuild === html) throw new Error('could not inject the debug flag');
+
+  fs.writeFileSync(path.join(root, 'standalone.html'), html);
+  fs.writeFileSync(path.join(root, 'standalone-debug.html'), debugBuild);
   fs.unlinkSync(tmpJs);
-  console.log(`standalone.html  ${(html.length / 1024).toFixed(0)} kb  (${root})`);
+  console.log(`standalone.html        ${(html.length / 1024).toFixed(0)} kb`);
+  console.log(`standalone-debug.html  ${(debugBuild.length / 1024).toFixed(0)} kb  (debug overlay + pad on)`);
 }
 
 main();

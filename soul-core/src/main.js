@@ -26,7 +26,10 @@ function readOptions() {
   const corrosionRate = num('corrosion', CONFIG.systems.corrosionRate);
 
   return {
-    debug: params.has('debug') && params.get('debug') !== '0',
+    // `?debug=1` normally; the standalone-debug.html build sets the flag below
+    // so an offline copy opens with the overlay + pad already on (you cannot
+    // add a query string to a file you just tapped in a file manager).
+    debug: (params.has('debug') && params.get('debug') !== '0') || !!window.__SOULCORE_FORCE_DEBUG,
     worldOpts: {
       seed: num('seed', CONFIG.world.seed),
       obstacleCount: num('rocks', CONFIG.world.obstacleCount),
