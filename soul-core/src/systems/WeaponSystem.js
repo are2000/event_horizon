@@ -19,10 +19,12 @@ import { CONFIG } from '../config.js';
 import { ShipSystem } from './ShipSystem.js';
 import { WeaponMount } from '../combat/WeaponMount.js';
 import { LaserWeapon } from '../combat/LaserWeapon.js';
+import { CannonWeapon } from '../combat/CannonWeapon.js';
 
 /** Weapon registry: config name -> class. Add new weapon types here. */
 const WEAPON_TYPES = {
   laser: LaserWeapon,
+  cannon: CannonWeapon,
 };
 
 export class WeaponSystem extends ShipSystem {
@@ -120,6 +122,7 @@ export class WeaponSystem extends ShipSystem {
         ship,
         targeting: c.targeting,
         particles: c.particles,
+        projectiles: c.projectiles,
         events: this.events,
         reserved: this.reserved,
         time: c.time ?? 0,

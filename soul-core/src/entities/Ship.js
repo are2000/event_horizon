@@ -65,6 +65,7 @@ export class Ship extends Entity {
       maxHeat: s.maxHeat, // thermal ceiling (the redline)
       maxHull: s.maxHull, // structural integrity
       coolingRate: s.coolingRate, // heat units dissipated per second
+      powerRegen: s.powerRegen, // capacitor units recharged per second
       corrosionRate: s.corrosionRate, // corrosion % per second
       engineThrust: CONFIG.ship.engineThrust, // wu/s² — the raw pull of the drive
 
@@ -74,6 +75,9 @@ export class Ship extends Entity {
       heat: 0, // 0..maxHeat*heatCeiling (may overshoot the ceiling)
       hull: s.maxHull, // 0..maxHull
       coreCorrosion: 0, // 0..100 — 100 = MELTDOWN
+      // Standby draw of every INSTALLED weapon (units/s). EquipmentSystem owns
+      // it; PowerSystem subtracts it from recharge. Gear is not free.
+      powerLoad: 0,
     };
 
     for (const key in overrides) stats[key] = overrides[key];
@@ -257,6 +261,7 @@ export class Ship extends Entity {
       maxHeat: this.stats.maxHeat,
       maxHull: this.stats.maxHull,
       coolingRate: this.stats.coolingRate,
+      powerRegen: this.stats.powerRegen,
       corrosionRate: this.stats.corrosionRate,
       engineThrust: this.stats.engineThrust,
     };

@@ -19,7 +19,11 @@ export class PowerSystem extends ShipSystem {
 
   constructor(config = {}) {
     super({ id: PowerSystem.id, ...config });
+    // Per-instance override; otherwise the ship's current rating (which the
+    // inventory can raise with capacitor modules) is the source of truth.
     this.regen = config.regen ?? CONFIG.systems.powerRegen;
+    /** Standby draw of installed gear, mirrored here for the HUD. */
+    this.load = 0;
     /** Last step's net charge change (negative = draining). Debug/HUD. */
     this.net = 0;
   }
@@ -29,8 +33,16 @@ export class PowerSystem extends ShipSystem {
     // Radiators and the capacitor share the thermal budget: a redlined core
     // diverts power away from recharging.
     const heatScale = ship.isOverheating ? cfg.overheatRegenPenalty : 1;
+
+    // Installed weapons bleed the reactor even while they are silent, so the
+    // net flow can be negative: bolt on more guns than the plant can feed and
+    // the capacitor slowly drains while you fly.
+    const regen = ship.stats.powerRegen ?? this.regen;
+    const load = ship.stats.powerLoad ?? 0;
+    this.load = load;
+
     const before = ship.stats.power;
-    ship.stats.power = clamp(ship.stats.power + this.regen * heatScale * dt, 0, ship.stats.maxPower);
+    ship.stats.power = clamp(ship.stats.power + (regen * heatScale - load) * dt, 0, ship.stats.maxPower);
     this.net = (ship.stats.power - before) / Math.max(dt, 1e-6);
   }
 
@@ -42,6 +54,7 @@ export class PowerSystem extends ShipSystem {
 
   reset() {
     this.net = 0;
+    this.load = 0;
   }
 }
 

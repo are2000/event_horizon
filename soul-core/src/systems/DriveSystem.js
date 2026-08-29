@@ -13,11 +13,12 @@
  * on Ship (`ship.consumePower(n)`, `ship.generateHeat(n)`), so the capacitor
  * and the heat curve already account for them.
  *
- * Balance (defaults): full throttle draws 20 power/s against 13/s of recharge,
+ * Balance (defaults): full throttle draws 23 power/s against 16/s of recharge,
  * so a continuous burn empties the capacitor in ~14 s. From then on the drive
- * only gets what the reactor can supply (duty ~0.65) and settles at ~74%
+ * only gets what the reactor can supply (duty ~0.7) and settles at ~78%
  * thrust. Heat builds at 16/s against 11/s of cooling, so holding the stick
  * down redlines the core in ~25 s. Burst, coast, cool — that's the rhythm.
+ * (Installed weapons eat into the same recharge — see EquipmentSystem.)
  */
 import { ShipSystem } from './ShipSystem.js';
 import { CONFIG } from '../config.js';

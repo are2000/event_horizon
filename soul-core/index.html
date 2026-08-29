@@ -28,6 +28,13 @@
   <div id="app">
     <canvas id="game"></canvas>
 
+    <!--
+      DOM UI layer. The game itself is all canvas, but the cargo hold is a
+      drag-and-drop surface — hit testing, hit slop and accessibility make DOM
+      the right tool for it. InventoryUI builds everything inside this element.
+    -->
+    <div id="ui-layer"></div>
+
     <!-- Shown if the module bundle fails to boot (missing server, parse error, ...). -->
     <div id="fatal" hidden>
       <h1>Soul Core failed to start</h1>

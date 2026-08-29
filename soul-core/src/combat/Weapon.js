@@ -45,6 +45,22 @@ export class Weapon {
     /** Cumulative telemetry. */
     this.damageDealt = 0;
     this.energyDrawn = 0;
+
+    /** Tint used by the mount's turret art. */
+    this.color = config.color ?? '#9fb4d8';
+    /**
+     * How the gun looks on the hull. Overriding this is what makes equipping
+     * a different weapon visibly change the ship:
+     *   { length, width, color, brake }
+     */
+    this.barrel = {
+      length: config.barrelLength ?? 17,
+      width: config.barrelWidth ?? 4,
+      color: this.color,
+      brake: config.brake ?? false,
+    };
+    /** Set by EquipmentSystem so it can tell when a slot's gun changed. */
+    this.itemUid = config.itemUid ?? null;
   }
 
   attach(mount) {

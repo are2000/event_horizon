@@ -366,17 +366,19 @@ const arcOf = (id) => MOUNTS.find((m) => m.id === id).arc;
   r.ship.stats.power = 0;
   r.run(1.2);
   check('power is never overdrawn below zero', r.ship.stats.power >= 0, `${f(r.ship.stats.power, 2)}`);
-  check('a drained capacitor stays drained under fire',
-    r.ship.stats.power <= CONFIG.systems.powerRegen * 0.05 + 1e-6, `power=${f(r.ship.stats.power, 2)}`);
+  // Two T1 lasers draw 14/s against 16/s of recharge: sustainable, but only
+  // just — a drained capacitor crawls back instead of snapping to full.
+  check('two beams are only just sustainable on a drained capacitor',
+    r.ship.stats.power < 12, `power=${f(r.ship.stats.power, 2)} after 1.2s from empty`);
 
   const rStarve = makeRig();
   rStarve.addEnemyRel(-50, 240, { hull: 400 });
   rStarve.addEnemyRel(50, 240, { hull: 400 });
   rStarve.addEnemyRel(180, 240, { hull: 400 });
   const powerBefore = rStarve.ship.stats.power;
-  rStarve.run(1.5);
+  rStarve.run(2.5);
   check('a full broadside drains the capacitor faster than it recharges',
-    rStarve.ship.stats.power < powerBefore - 8,
+    rStarve.ship.stats.power < powerBefore - 10,
     `${f(powerBefore)} -> ${f(rStarve.ship.stats.power)} (3 x ${CONFIG.combat.laser.powerDraw}/s vs +${CONFIG.systems.powerRegen}/s)`);
   rStarve.ship.stats.power = 0; // pull the plug mid-broadside
   rStarve.run(1.5);

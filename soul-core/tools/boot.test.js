@@ -2,101 +2,35 @@
 // Catches wiring typos in the render/input/HUD paths unit tests can't see.
 //   node tools/boot.test.js
 
-const handlers = new Map();
-function addHandler(map, type, fn) {
-  if (!map.has(type)) map.set(type, []);
-  map.get(type).push(fn);
-}
-function fire(map, type, event = {}) {
-  const list = map.get(type) || [];
-  for (const fn of list) fn({ preventDefault() {}, stopPropagation() {}, ...event });
-}
+import { installDomStub } from './dom-stub.mjs';
 
-/** When true, every canvas call is recorded so tests can assert on drawing. */
-let recording = false;
-let drawCalls = [];
-
-const ctx2d = new Proxy({}, {
-  get(target, prop) {
-    if (prop in target) return target[prop];
-    return (...args) => {
-      if (recording) {
-        drawCalls.push({
-          m: prop,
-          args,
-          fill: target.fillStyle,
-          stroke: target.strokeStyle,
-          alpha: target.globalAlpha,
-          composite: target.globalCompositeOperation,
-        });
-      }
-      if (prop === 'createRadialGradient' || prop === 'createLinearGradient') return { addColorStop() {} };
-      if (prop === 'measureText') return { width: 10 };
-      if (prop === 'createPattern') return {};
-      return undefined;
-    };
-  },
-  set(target, prop, value) { target[prop] = value; return true; },
-});
+const dom = installDomStub({ width: 390, height: 844, dpr: 3 });
+const { canvas, ctx2d, canvasHandlers, windowHandlers, fire, El } = dom;
 
 /** Render one frame with drawing recorded. */
+let game = null; // set below, before the first captureFrame()
 function captureFrame(alpha = 0) {
-  drawCalls = [];
-  recording = true;
+  dom.startRecording();
   game.render(alpha, 1 / 60);
-  recording = false;
-  return drawCalls;
+  return dom.stopRecording();
 }
 const texts = (calls) => calls.filter((c) => c.m === 'fillText').map((c) => ({
   text: String(c.args[0]), x: c.args[1], y: c.args[2], fill: c.fill,
 }));
 const fillColors = (calls) => calls.filter((c) => c.m === 'fill').map((c) => String(c.fill));
 
-const canvasHandlers = new Map();
-const canvas = {
-  width: 0, height: 0,
-  clientWidth: 390, clientHeight: 844,
-  style: {},
-  getContext: () => ctx2d,
-  addEventListener: (t, fn) => addHandler(canvasHandlers, t, fn),
-  removeEventListener: () => {},
-  getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 844 }),
-};
-
-const windowHandlers = new Map();
-global.window = {
-  innerWidth: 390,
-  innerHeight: 844,
-  devicePixelRatio: 3,
-  addEventListener: (t, fn) => addHandler(windowHandlers, t, fn),
-  removeEventListener: () => {},
-  requestAnimationFrame: () => 1,
-  cancelAnimationFrame: () => {},
-  location: { search: '' },
-  // no visualViewport on purpose: exercises the feature-detection branch
-};
-global.document = {
-  getElementById: (id) => (id === 'game' ? canvas : null),
-  addEventListener: () => {},
-  documentElement: {},
-  body: { classList: { add() {}, remove() {} } },
-  hidden: false,
-};
-global.getComputedStyle = () => ({ getPropertyValue: () => '0px' });
-global.requestAnimationFrame = global.window.requestAnimationFrame;
-global.cancelAnimationFrame = global.window.cancelAnimationFrame;
-
 const { Game } = await import('../src/core/Game.js');
 const { CONFIG } = await import('../src/config.js');
 
 let failures = 0;
 const f = (n, d = 1) => n.toFixed(d);
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
 function check(name, cond, extra = '') {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  [' + extra + ']' : ''}`);
   if (!cond) failures++;
 }
 
-const game = new Game(canvas, { debug: true });
+game = new Game(canvas, { debug: true });
 game.init();
 
 check('boots without throwing', true, '');
@@ -160,14 +94,22 @@ const vRelease = game.ship.speedValue;
 frames(60);
 check('ship keeps drifting after release', game.ship.speedValue > vRelease * 0.6,
   `${f(vRelease)} -> ${f(game.ship.speedValue)}`);
+// The turrets are live now (they auto-target anything in arc), so silence
+// them for this measurement — we are testing the radiators, not the guns.
+const weaponSystem = game.systems.get('weapons');
+weaponSystem.enabled = false;
 const hotBefore = game.ship.stats.heat;
 frames(120); // another second of coasting
 check('heat radiates away while coasting', game.ship.stats.heat < hotBefore, `${f(hotBefore)} -> ${f(game.ship.stats.heat)}`);
+weaponSystem.enabled = true;
 check('power recharges while coasting', game.ship.stats.power > 10, `${f(game.ship.stats.power)}`);
 
 /* ------------------------------- weight ------------------------------------ */
 fire(canvasHandlers, 'pointerdown', { pointerId: 3, clientX: jx, clientY: jy, target: canvas });
 fire(windowHandlers, 'pointermove', { pointerId: 3, clientX: jx + 200, clientY: jy });
+frames(2);
+// The hold ships with gear, so zero it out to measure the formula itself.
+game.ship.stats.weight = 0;
 frames(2);
 const accelEmpty = game.ship.currentAccel;
 game.ship.stats.weight = game.ship.stats.maxWeight * 0.5;
@@ -225,7 +167,13 @@ check('restart restores hull/power and clears corrosion + heat',
   game.ship.stats.hull === game.ship.stats.maxHull &&
   game.ship.stats.power === game.ship.stats.maxPower &&
   game.ship.stats.coreCorrosion === 0 && game.ship.stats.heat === 0 &&
-  game.ship.stats.weight === 0, JSON.stringify(game.status()));
+  // Gear survives death, so the hold's mass is back on the scales.
+  near(game.ship.stats.weight, game.inventory.totalWeight, 0.01), JSON.stringify(game.status()));
+check('module bonuses survive a restart without double-dipping',
+  game.ship.stats.maxHull === CONFIG.systems.maxHull + (game.inventory.bonuses.maxHull ?? 0) &&
+  game.ship.stats.maxPower === CONFIG.systems.maxPower + (game.inventory.bonuses.maxPower ?? 0) &&
+  game.ship.stats.maxHeat === CONFIG.systems.maxHeat + (game.inventory.bonuses.maxHeat ?? 0),
+  `hull ${game.ship.stats.maxHull} power ${game.ship.stats.maxPower} heat ${game.ship.stats.maxHeat}`);
 check('restart clears the meltdown latch', game.core.corrosion.melted === false, '');
 check('restart repoints the HUD (minimap) at the new sector',
   game._renderInfo.world === game.world && game.updateContext.world === game.world, '');
@@ -360,6 +308,13 @@ check('360 frames across every gauge state render cleanly', renderError === null
   const p = CONFIG.palette;
   game.state = 'playing';
   game.ship.visible = true;
+  // The probe below reads every fill colour in the frame, so clear the world
+  // first: salvage crates are tinted with the same palette as the gauges and
+  // explosion particles are heat-orange, which would make it flaky.
+  game.particles.clear();
+  game.projectiles.clear();
+  game.pickups.length = 0;
+  game.enemies.length = 0;
   // Non-zero so every bar has something to paint (empty gauges draw no fill).
   game.ship.stats.heat = 40;
   game.ship.stats.coreCorrosion = 25;

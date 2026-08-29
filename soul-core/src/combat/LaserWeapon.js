@@ -39,6 +39,9 @@ export class LaserWeapon extends Weapon {
 
     this.beamAlpha = 0;
     this._flicker = 1;
+
+    // Slim emitter — visually distinct from the cannon's stubby barrel.
+    this.barrel = { length: 17, width: 4, color: this.color, brake: false };
   }
 
   get dps() {

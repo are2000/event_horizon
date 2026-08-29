@@ -1,4 +1,4 @@
-# Soul Core: The Great Decay — Phase 3 (Modular Weapons & Auto-Targeting)
+# Soul Core: The Great Decay — Phase 4 (Inventory & Merge System)
 
 A top-down **roguelite space survival** game for **mobile portrait**, built with
 **vanilla JavaScript (ES6 classes) + HTML5 Canvas + CSS**. No frameworks, no
@@ -39,7 +39,7 @@ tunnel (`ngrok http 8000`). Add `?debug=1` for the telemetry overlay.
 | Gauge         | Colour | Capacity stat | What moves it                                                    | What it costs you                                   |
 | ------------- | ------ | ------------- | ---------------------------------------------------------------- | --------------------------------------------------- |
 | **HULL**      | green  | `maxHull`     | Asteroid impacts, thermal damage while redlined                  | 0 = **HULL BREACH** (run over)                      |
-| **POWER**     | cyan   | `maxPower`    | `powerRegen` recharges it; the drive (and later weapons) drain it | An empty capacitor browns the drive out to ~74% thrust |
+| **POWER**     | cyan   | `maxPower`    | `powerRegen` recharges it; the drive, guns and installed-weapon load drain it | An empty capacitor browns the drive out to ~70% thrust |
 | **HEAT**      | orange | `maxHeat`     | `coolingRate` dissipates it; burning the drive generates it       | Past `maxHeat`: thrust/turn/top-speed penalties + hull damage |
 | **CORROSION** | purple | — (0…100%)    | `corrosionRate` per second, ×3 while overheating                 | 100% = **CORE MELTDOWN** (run over)                 |
 
@@ -121,6 +121,8 @@ soul-core/
 ├── tools/                      Headless test suites (zero dependencies)
 │   ├── sim.test.js             Physics, weight, power, heat, corrosion, hull
 │   ├── combat.test.js          Mounts, arc maths, targeting, lasers, dummies
+│   ├── inventory.test.js       Items, grid, merging, equipping, drag & drop
+│   └── dom-stub.mjs            ~200-line DOM for headless UI tests
 │   ├── boot.test.js            Real Game vs stubbed DOM: input, HUD, combat, game over
 │   └── (see §8)
 └── src/
@@ -137,12 +139,20 @@ soul-core/
     ├── entities/
     │   ├── Entity.js           Base: transform, prev-transform, interpolation
     │   ├── Ship.js             Flight model + stats + ratio getters + resource API
-    │   └── Enemy.js            Dummy target + seeded field spawner
+    │   ├── Enemy.js            Dummy target + seeded field spawner
+    │   └── ItemPickup.js       Salvage crate floating in the world
+    ├── inventory/
+    │   ├── ItemDefs.js          The equipment catalogue (pure data)
+    │   ├── Item.js              defId + tier -> scaled stats, size, merge rules
+    │   ├── Inventory.js         5x6 grid, merge, equip slots, totals
+    │   └── InventoryUI.js       DOM overlay: drag & drop, slots, tooltips
     ├── combat/
     │   ├── WeaponMount.js      Hardpoint: local offset, arc constraint, rotation
     │   ├── Weapon.js           Base class for anything bolted to a mount
     │   ├── LaserWeapon.js      Continuous beam: power + heat + dps + beam FX
-    │   └── TargetingManager.js Arc/range aware target selection
+    │   ├── TargetingManager.js Arc/range aware target selection
+    │   ├── CannonWeapon.js     Burst-fire shells (the second weapon family)
+    │   └── ProjectilePool.js   Fixed-size shell pool: simulate + render
     ├── world/
     │   └── World.js            Seeded sector: grid, parallax stars, asteroids
     ├── fx/
@@ -156,7 +166,8 @@ soul-core/
     │   ├── HeatSystem.js       Cooling + overheat movement penalties
     │   ├── CorrosionSystem.js  The run timer; emits 'ship:meltdown'
     │   ├── HullSystem.js       All damage intake; emits 'ship:destroyed'
-    │   └── WeaponSystem.js     Owns the mounts; drives them each fixed step
+    │   ├── WeaponSystem.js     Owns the mounts; drives them each fixed step
+    │   └── EquipmentSystem.js  Cargo hold -> ship: mass, power load, bonuses, guns
     └── ui/
         ├── VirtualJoystick.js  Canvas-drawn stick, multi-touch safe
         └── HUD.js              The four gauge bars + GUNS row + minimap + debug
@@ -326,12 +337,129 @@ a tall phone sees more world instead of being zoomed out.
 
 ---
 
-## 6. Balance knobs — `src/config.js → systems`
+## 7. Cargo hold — inventory, merging, hardpoints
+
+The hold is a **5 × 6 grid of cells**, drawn as a DOM overlay on top of the
+canvas. Guns live here until they are bolted to a hardpoint; modules work
+straight out of the crate.
+
+### Why DOM, not canvas
+
+This one screen is a *touch surface*. Hit testing, hit slop, focus and text all
+come free, and drag-and-drop — the interaction that has to feel perfect — is a
+solved problem with pointer events. The game keeps rendering behind it; the
+panel is just a layer (`#ui-layer`), and `touch-action: none` in CSS stops the
+browser from ever stealing a drag.
+
+### Touch rules that shaped the UI
+
+| # | Rule | Why |
+| - | ---- | --- |
+| 1 | Pointer events only | one code path for finger, stylus and mouse |
+| 2 | A drag starts after ~7px | a tap still means "show me the details" |
+| 3 | The card is lifted 14px above the finger and scaled 1.06 | a fingertip hides a 60px cell |
+| 4 | Every landing zone is colour-coded on pick-up | gold = merges, green = fits, red = refused |
+| 5 | Nothing is destroyed by accident | illegal drops snap back; a full hold refuses a swap instead of eating the old gun; jettison needs a deliberate drag onto the chute |
+
+Cells are recomputed from the viewport (38–72px), so a 360×640 phone gets a
+53px grid and a 390×844 phone gets 67px — always thumb-sized, always fitting.
+
+### Items
+
+| Item | Size | Tier 1 | Role |
+| ---- | ---- | ------ | ---- |
+| **Laser** | 1×2 | 34 dps · 7 power/s · 13 heat/s · 3 kg | continuous beam |
+| **Cannon** | 1×2 | 30 dmg × 2/s · 9 power/shot · 10 heat/shot · 5 kg | burst shells with travel time |
+| **Capacitor** | 1×1 | +18 max charge, +2 recharge | 2 kg |
+| **Radiator** | 1×1 | +4 cooling, +8 redline | 2 kg |
+| **Plating** | 1×1 | +18 max hull | 3 kg |
+
+`Item` holds a `defId` + a `tier` and derives everything else in one place, so
+the number in the tooltip, the mass on the scales and the gun on the mount can
+never disagree. Per-tier growth (`TIER_SCALE`): damage ×1.7, weight ×1.25,
+power ×1.32 — climbing the ladder is more efficient per kilogram, but
+absolutely harder to run.
+
+### Merging
+
+Drop an item onto an **identical item of the same tier** and they become one
+item one tier up, in the target's cell:
+
+```
+Laser T1  +  Laser T1  ->  Laser T2   (63 dps, 3.8 kg)
+Laser T2  +  Laser T2  ->  Laser T3   (116 dps, 4.7 kg)
+...up to T4, which is final
+```
+
+Different items, different tiers, and max-tier items are all refused — the drop
+is simply invalid, so nothing is ever lost to a fumble. Equipped guns can be
+merged **in place**: drop a spare Laser T1 onto the Laser T1 in the LEFT slot
+and the ship keeps firing with an upgraded gun (EquipmentSystem rebuilds it).
+
+### Equip slots
+
+Three slots above the grid mirror the ship's hardpoints, each labelled with its
+traverse arc (`-90°…30°`, `-30°…90°`, `90°…270°`):
+
+* only **weapons** fit — modules light the slot red
+* dropping onto an occupied slot **swaps**, pushing the old gun back into the
+  grid (refused if there is no room, rather than destroying it)
+* unequipping leaves a visible **empty socket** on the hull, and that mount
+  stops scanning for targets entirely
+* the mount's art comes from the weapon (`barrel.length / width / color`), so
+  swapping a laser for a cannon visibly changes the ship on the canvas
+
+### What gear does to the ship (`EquipmentSystem`)
+
+| Effect | Mechanism |
+| ------ | --------- |
+| **Mass** | every carried item adds to `stats.weight` → the existing `1 - weight/maxWeight` thrust and turn factor. A full hold is a slow ship. |
+| **Power load** | every *installed* weapon bleeds `draw × idleLoadFactor` (0.2) units/s, subtracted from recharge by `PowerSystem`. Guns are not free. |
+| **Bonuses** | modules in the grid raise `maxPower`, `powerRegen`, `coolingRate`, `maxHeat`, `maxHull`. |
+
+Everything is applied as a **delta** against what the system last applied, so
+it composes with debug cargo and future meta upgrades instead of stomping on
+them. The panel shows the three numbers that matter — MASS, LOAD, RECHARGE —
+and the HUD status line carries the load next to the mass readout.
+
+Measured with the stock loadout (2 lasers + 1 cannon + 3 modules):
+
+| Situation | Mass | Load | Capacitor empty after | Sustained thrust |
+| --------- | ---- | ---- | --------------------- | ---------------- |
+| Stock, coasting | 26/100 | 6.4/s | — | 0.74 |
+| Stock, full stick | 26/100 | 6.4/s | ~11 s | 0.46 (brownout) |
+| Guns removed, full stick | 26/100 | 0 | ~24 s | 0.62 |
+| Three T4 lasers, full stick | 18/100 | 9.6/s | ~7 s | 0.40 |
+| Hold full of junk | 90/100 | 0 | ~15 s | 0.04 |
+
+### The salvage loop
+
+Dummies drop crates (**55% chance**, capped at 14 in the sector, decaying after
+75 s). Fly over one to collect it; a full hold refuses it and says so. Crates
+are what turn merging from a one-off puzzle into a loop — and they are also why
+the hold fills up and forces decisions.
+
+```js
+SoulCore.inventory.addDef('laser', 2)   // spawn an item
+SoulCore.inventory.debugString()        // "hold 8 items  26kg  load 6.4/s  left:Laser T1 ..."
+SoulCore.pickups.length                 // crates waiting in the sector
+```
+
+### Adding an item
+
+One entry in `src/inventory/ItemDefs.js` plus a glyph in `InventoryUI.ICONS`.
+A `kind: 'weapon'` item needs a `weaponType` registered in `WeaponSystem`'s
+`WEAPON_TYPES`; a `kind: 'module'` item just needs `bonus` keys from
+`EquipmentSystem`'s `BONUS_STATS`.
+
+---
+
+## 8. Balance knobs — `src/config.js → systems`
 
 ```js
 systems: {
   maxHull: 100, impactDamage: 42, impactDamageMinSpeed: 110, thermalDamagePerSecond: 3,
-  maxPower: 100, powerRegen: 13, drivePowerDraw: 20, brownoutThrust: 0.25,
+  maxPower: 100, powerRegen: 16, drivePowerDraw: 23, brownoutThrust: 0.25,
   maxHeat: 100, coolingRate: 11, driveHeatGain: 16, heatCeiling: 2.0,
   overheatThrustPenalty: 0.55, overheatTurnPenalty: 0.35, overheatSpeedPenalty: 0.3,
   maxWeight: 100, minThrustFactor: 0, minTurnFactor: 0,
@@ -339,10 +467,12 @@ systems: {
 }
 ```
 
-Default rhythm: a continuous full-stick burn drains the capacitor in ~14 s
-(then the drive runs on reactor output alone at ~74% thrust) and redlines the
-core in ~25 s, after which the hull starts cooking at 3/s. Corrosion alone
-ends the run in **~4m45s**, roughly three times faster if you live in the red.
+Default rhythm: with nothing installed, a continuous full-stick burn drains the
+capacitor in ~24 s (then the drive runs on reactor output alone at ~62% thrust
+once the 26 kg starting loadout is aboard) and redlines the core in ~25 s,
+after which the hull starts cooking at 3/s. Installing guns shortens that
+sharply — see the table in §7. Corrosion alone ends the run in **~4m45s**,
+roughly three times faster if you live in the red.
 
 Adding a weapon later is two lines, and the balance already accounts for it:
 
@@ -356,16 +486,21 @@ update(dt, ship) {
 
 ---
 
-## 7. Tests
+## 9. Tests
 
 No dependencies, no build step — just Node:
 
 ```bash
-node tools/sim.test.js     # 58 checks: physics, weight, power, heat, corrosion, hull
-node tools/combat.test.js  # 56 checks: mounts, arc maths, targeting, lasers, dummies
-node tools/boot.test.js    # 71 checks: real Game booted vs stubbed DOM + 2D context
-npm test                   # all three (185+ checks)
+node tools/sim.test.js        # 58 checks: physics, weight, power, heat, corrosion, hull
+node tools/combat.test.js     # 73 checks: mounts, arc maths, targeting, lasers, dummies
+node tools/inventory.test.js  # 106 checks: items, grid, merging, equipping, drag & drop
+node tools/boot.test.js       # 81 checks: real Game booted vs stubbed DOM + 2D context
+npm test                      # all four (318 checks)
 ```
+
+`tools/dom-stub.mjs` is a ~200-line DOM (elements, classList, querySelector,
+event dispatch, overridable `getBoundingClientRect`) — enough to run the real
+inventory UI headlessly, with no jsdom and no dependencies.
 
 `boot.test.js` fakes `window`/`document`/canvas, then fires **synthetic pointer
 and key events** and inspects **recorded canvas draw calls** — so the virtual
@@ -388,10 +523,21 @@ Coverage highlights:
   identical at 240/120/60 Hz
 * in the real Game: dummies spawn, mounts auto-fire, kills are counted, and the
   beam is drawn as an additive stroke in the laser colour
+* grid placement: footprints, overlap, bounds, rotation, "hold is full"
+* the merge ladder: same def + same tier climbs one step; different defs,
+  different tiers and max tier are all refused; merges keep the target's cell
+  and work on equipped guns
+* equipping: weapons only, swaps push the old gun back (and refuse when there
+  is no room), empty hardpoints stop scanning
+* ship integration: mass → thrust factor, installed guns → power load → slower
+  recharge, modules → raised ratings, applied exactly once across a restart
+* drag & drop driven through real pointer events: move, merge, equip, swap,
+  jettison, illegal-drop snap-back, live green/gold/red highlighting, and the
+  tap-to-open details card
 
 ---
 
-## 8. Status
+## 10. Status
 
 | Requirement                                                       | Status |
 | ----------------------------------------------------------------- | ------ |
@@ -407,9 +553,17 @@ Coverage highlights:
 | Auto-targeting manager picks the closest valid enemy                | ✅ `TargetingManager` |
 | Stationary dummy enemies                                            | ✅ `Enemy` + seeded `spawnField()` |
 | Continuous laser beam that consumes power and generates heat        | ✅ `LaserWeapon` |
+| 5x6 inventory grid (DOM overlay)                                     | ✅ `InventoryUI` + `style.css` |
+| Items with cell sizes (1x1 modules, 1x2 weapons)                     | ✅ `ItemDefs` + `Item` |
+| Drag & drop around the grid                                          | ✅ pointer events, 7px threshold |
+| Merge: identical item + identical tier -> next tier                  | ✅ `Inventory.merge()` |
+| Three equip slots (Left / Right / Rear)                              | ✅ `Inventory.equipped` |
+| Equipping updates the ship on canvas + Weight and Power stats        | ✅ `EquipmentSystem` |
+| Clear valid / invalid / merge highlighting                           | ✅ gold / green / red cell states |
+| Salvage drops so the hold keeps growing                              | ✅ `ItemPickup` + `_maybeDropSalvage()` |
 
-### Next up (Phase 4 candidates)
-Mobile enemies (chase/strafe AI by subclassing `Enemy`) · projectile weapons
-through the same `Weapon` base · salvage drops → Weight · repair/coolant
-pickups · shield module · meta upgrades that raise the `max*` ratings and swap
-`weaponType` on a mount · audio · real sprite atlas behind the palette.
+### Next up (Phase 5 candidates)
+Mobile enemies (chase/strafe AI by subclassing `Enemy`) · consumables (repair,
+coolant flush) as inventory items · item rarity/affixes · run-scoped loadouts
+(gear currently survives death — the meta layer) · ship chassis that change the
+number of hardpoints · audio · real sprite atlas behind the palette.

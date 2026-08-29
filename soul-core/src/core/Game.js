@@ -32,7 +32,14 @@ import { HeatSystem } from '../systems/HeatSystem.js';
 import { CorrosionSystem } from '../systems/CorrosionSystem.js';
 import { HullSystem } from '../systems/HullSystem.js';
 import { WeaponSystem } from '../systems/WeaponSystem.js';
+import { EquipmentSystem } from '../systems/EquipmentSystem.js';
 import { TargetingManager } from '../combat/TargetingManager.js';
+import { ProjectilePool } from '../combat/ProjectilePool.js';
+import { Inventory } from '../inventory/Inventory.js';
+import { InventoryUI } from '../inventory/InventoryUI.js';
+import { Item } from '../inventory/Item.js';
+import { ItemPickup } from '../entities/ItemPickup.js';
+import { DROP_TABLE } from '../inventory/ItemDefs.js';
 import { HUD } from '../ui/HUD.js';
 import { VirtualJoystick } from '../ui/VirtualJoystick.js';
 import { World } from '../world/World.js';
@@ -48,12 +55,14 @@ import { clamp, font, TAU } from './MathUtils.js';
  *   weight     — load factor (read by physics the same step)
  *   drive      — the placeholder consumer: draws power, generates heat
  *   weapons    — mounts rotate, then draw power / dump heat while firing
- *   power      — capacitor recharge
+ *   equipment  — pushes cargo-hold changes (mass, power load, bonuses) onto
+ *                the ship and (re)builds the weapon bolted to each mount
+ *   power      — capacitor recharge, minus the installed weapons' load
  *   heat       — cooling + overheat penalties
  *   corrosion  — the run timer; emits 'ship:meltdown' at 100%
  *   hull       — damage intake; emits 'ship:destroyed' at 0
  */
-const CORE_SYSTEM_ORDER = ['weight', 'drive', 'weapons', 'power', 'heat', 'corrosion', 'hull'];
+const CORE_SYSTEM_ORDER = ['weight', 'drive', 'weapons', 'equipment', 'power', 'heat', 'corrosion', 'hull'];
 
 export class Game {
   /**
@@ -85,6 +94,8 @@ export class Game {
       weight: new WeightSystem(),
       drive: new DriveSystem(),
       weapons: new WeaponSystem(opts.combat),
+      // The bridge between the cargo hold and the ship's numbers.
+      equipment: new EquipmentSystem({ inventory: null }),
       power: new PowerSystem(),
       heat: new HeatSystem(),
       corrosion: new CorrosionSystem(),
@@ -92,7 +103,13 @@ export class Game {
     };
     // Install order == update order: consumers run before the gauges they
     // feed (drive + guns draw power, then the capacitor recharges...).
+    /* --- cargo hold -------------------------------------------------------- */
+    /** The inventory model. Never reassigned: the UI and EquipmentSystem both
+        hold this reference for the lifetime of the game. */
+    this.inventory = new Inventory({ events: this.events });
+    this.core.equipment.inventory = this.inventory;
     for (const key of CORE_SYSTEM_ORDER) this.systems.install(this.core[key]);
+    this.inventory.load(CONFIG.inventory.startLoadout); // gear -> ship stats
 
     /* --- combat ----------------------------------------------------------- */
     /** Live enemy list. Never reassigned — restarts refill it in place so the
@@ -100,11 +117,16 @@ export class Game {
     this.enemies = [];
     this.targeting = new TargetingManager(this.enemies, CONFIG.combat.targeting);
     this.kills = 0;
+    /** Shells in flight (cannons). Simulated here so they outlive their gun. */
+    this.projectiles = new ProjectilePool(opts.shellCapacity);
+    /** Salvage waiting to be collected. @type {ItemPickup[]} */
+    this.pickups = [];
 
     // Shared per-step context for systems that need more than the ship.
     this.systems.context = {
       world: this.world,
       particles: this.particles,
+      projectiles: this.projectiles,
       camera: this.camera,
       events: this.events,
       targeting: this.targeting,
@@ -114,6 +136,11 @@ export class Game {
 
     /* ----------------------------------------------------------------- ui -- */
     this.hud = new HUD(this.viewport, this.ship);
+    /** @type {InventoryUI|null} built in init() once the DOM exists. */
+    this.inventoryUI = null;
+    /** While the cargo hold is open the world is frozen (safe fiddling). */
+    this._pausedBeforeInventory = false;
+    this._lastFullToast = -99; // throttle for the "hold is full" toast
 
     /* -------------------------------------------------------------- state -- */
     /** 'title' | 'playing' | 'gameover' */
@@ -159,6 +186,9 @@ export class Game {
       targets: 0,
       weapons: this.core.weapons,
       targeting: this.targeting,
+      cargo: this.inventory,
+      projectiles: this.projectiles,
+      pickups: 0,
       frameDt: 0,
     };
     this._camTarget = { x: 0, y: 0, vx: 0, vy: 0 };
@@ -176,6 +206,10 @@ export class Game {
 
     this.joystick.layout();
     this.hud.layout();
+
+    // DOM overlay for the cargo hold (needs the #ui-layer element).
+    this.inventoryUI = new InventoryUI({ game: this, inventory: this.inventory });
+    this._syncInventoryVisibility();
 
     this._spawnEnemies();
 
@@ -223,7 +257,8 @@ export class Game {
         this.paused = true;
         document.body.classList.add('is-hidden');
       } else {
-        this.paused = false;
+        // Don't un-freeze the world if the cargo hold is still open.
+        this.paused = !!this.inventoryUI?.isOpen;
         document.body.classList.remove('is-hidden');
         // Drop the "time away" so the ship doesn't jump on resume.
         this.loop.resetTiming();
@@ -254,7 +289,100 @@ export class Game {
       });
       // Killing things is a little bit loud.
       this.camera.addShake(2.5);
+      this._maybeDropSalvage(x, y);
     });
+  }
+
+  /* ============================================================== salvage == */
+
+  /**
+   * Roll for a drop when something dies. Salvage is the only way the hold
+   * grows, which is what makes merging a loop instead of a one-off puzzle.
+   */
+  _maybeDropSalvage(x, y) {
+    if (this.state !== 'playing') return null;
+    if (this.pickups.length >= CONFIG.inventory.maxPickups) return null;
+    if (Math.random() > CONFIG.inventory.dropChance) return null;
+
+    let total = 0;
+    for (const key in DROP_TABLE) total += DROP_TABLE[key];
+    let roll = Math.random() * total;
+    let defId = 'laser';
+    for (const key in DROP_TABLE) {
+      roll -= DROP_TABLE[key];
+      if (roll <= 0) {
+        defId = key;
+        break;
+      }
+    }
+
+    const pickup = new ItemPickup({ x, y, item: new Item({ defId }) });
+    this.pickups.push(pickup);
+    return pickup;
+  }
+
+  /** Fly over a crate to collect it. */
+  _collect(pickup) {
+    const item = pickup.item;
+    const added = this.inventory.add(item);
+    if (!added) {
+      // Throttled: you can sit on a full hold for a long time.
+      if (this.time - this._lastFullToast > 2.5) {
+        this._lastFullToast = this.time;
+        this.inventoryUI?.toast('hold is full', 'bad');
+      }
+      return false;
+    }
+    pickup.collected = true;
+    pickup.alive = false;
+    this.particles.burst(16, {
+      x: pickup.x, y: pickup.y, speed: 200, life: 0.6, size: 3.4, color: item.color, drag: 2.4, jitter: 10,
+    });
+    this.inventoryUI?.toast(`salvaged ${item.name}`, 'good');
+    this.events.emit('item:picked-up', { item, pickup });
+    return true;
+  }
+
+  /* =========================================================== inventory == */
+
+  /** Show/hide the DOM layer and freeze the world while it is open. */
+  _syncInventoryVisibility(force = null) {
+    const ui = this.inventoryUI;
+    if (!ui) return;
+    const visible = force ?? (this.state === 'playing');
+    ui.root.classList.toggle('is-live', !!visible && !ui.isOpen);
+  }
+
+  /**
+   * Pause for the cargo hold. Inventory fiddling should never cost you hull,
+   * so while the panel is open the simulation is frozen (rendering continues,
+   * so the frozen scene is still visible behind the panel).
+   */
+  pauseForInventory(on) {
+    if (on) {
+      this._pausedBeforeInventory = this.paused;
+      this.paused = true;
+      this.input.enabled = false;
+    } else {
+      this.paused = !!this._pausedBeforeInventory;
+      this.input.enabled = this.state === 'playing';
+      this.loop.resetTiming();
+    }
+    this._syncInventoryVisibility(this.state === 'playing');
+  }
+
+  openInventory() {
+    return this.inventoryUI?.open();
+  }
+
+  closeInventory() {
+    return this.inventoryUI?.close();
+  }
+
+  toggleInventory() {
+    if (!this.inventoryUI) return null;
+    if (this.state !== 'playing') return null;
+    return this.inventoryUI.toggle();
   }
 
   /** Tap / click: start the run, or restart after a game over. */
@@ -278,6 +406,7 @@ export class Game {
     this.state = 'playing';
     this.input.enabled = true;
     this.runTime = 0;
+    this._syncInventoryVisibility();
     this.events.emit('run:start', { ship: this.ship, world: this.world });
   }
 
@@ -292,10 +421,13 @@ export class Game {
     this.state = 'gameover';
     this.endReason = reason;
     this.input.enabled = false;
+    // Never leave the cargo hold covering the wreck: closing it also un-pauses.
+    this.closeInventory();
     this.ship.alive = false;
     this.ship.visible = false; // the wreck is now debris + particles
     this.hud.flash = 1;
     this._explode();
+    this._syncInventoryVisibility();
     this.runsCompleted++;
     this.events.emit('run:end', { reason, time: this.runTime, ship: this.ship });
   }
@@ -341,12 +473,17 @@ export class Game {
 
     this._spawnEnemies(); // fresh dummies for the fresh sector
     this.kills = 0;
+    // Gear survives death (that's the meta layer for now) — EquipmentSystem
+    // re-applies it to the freshly-reset ship during systems.reset().
+    this.pickups.length = 0;
+    this.projectiles.clear();
 
     this.hud.resetRun();
     this.runTime = 0;
     this.endReason = null;
     this.state = 'playing';
     this.input.enabled = true;
+    this._syncInventoryVisibility();
     this.events.emit('run:start', { ship: this.ship, world: this.world, restart: true });
     return this;
   }
@@ -382,6 +519,13 @@ export class Game {
         break;
       case 'KeyJ':
         this.jettisonCargo();
+        break;
+      case 'KeyI':
+      case 'Tab':
+        this.toggleInventory();
+        break;
+      case 'Escape':
+        this.closeInventory();
         break;
       case 'Enter':
       case 'Space':
@@ -466,6 +610,27 @@ export class Game {
     for (let i = 0; i < this.enemies.length; i++) this.enemies[i].update(dt, this.updateContext);
     this.particles.update(dt);
 
+    /* 4b. Shells in flight + salvage. Both live in WORLD space and are
+           simulated here rather than by the weapon that made them. */
+    this.projectiles.update(dt, {
+      world: this.world,
+      enemies: this.enemies,
+      particles: this.particles,
+      events: this.events,
+    });
+    for (let i = this.pickups.length - 1; i >= 0; i--) {
+      const p = this.pickups[i];
+      p.update(dt, this.updateContext);
+      if (!p.alive) {
+        this.pickups.splice(i, 1);
+        continue;
+      }
+      if (this.state === 'playing' &&
+        Math.hypot(p.x - this.ship.x, p.y - this.ship.y) <= CONFIG.inventory.pickupRadius) {
+        if (this._collect(p)) this.pickups.splice(i, 1);
+      }
+    }
+
     // 5. Camera last: it follows the ship's freshly integrated position.
     const t = this._camTarget;
     t.x = this.ship.x;
@@ -503,6 +668,8 @@ export class Game {
 
     // Enemies sit between the rocks and the ship; beams go on top of both.
     for (let i = 0; i < this.enemies.length; i++) this.enemies[i].render(ctx, alpha);
+    for (let i = 0; i < this.pickups.length; i++) this.pickups[i].render(ctx, alpha);
+    this.projectiles.render(ctx, alpha);
 
     this.particles.render(ctx);
     if (this.ship.visible) this.ship.render(ctx, alpha);
@@ -522,11 +689,13 @@ export class Game {
     this._renderInfo.frameDt = frameDt;
     this._renderInfo.kills = this.kills;
     this._renderInfo.targets = this.targeting.aliveCount;
+    this._renderInfo.pickups = this.pickups.length;
     this.hud.render(ctx, this._renderInfo);
 
     if (this.state === 'title') this._renderTitle(ctx, frameDt);
     else if (this.state === 'gameover') this._renderGameOver(ctx);
-    if (this.paused) this._renderPaused(ctx);
+    // The cargo hold is its own pause screen, so don't stack PAUSED on top.
+    if (this.paused && !this.inventoryUI?.isOpen) this._renderPaused(ctx);
   }
 
   /** Collision circles, heading vs velocity vectors (drift visualiser). */
@@ -588,7 +757,7 @@ export class Game {
 
     ctx.fillStyle = p.textDim;
     ctx.font = font(11, 500);
-    ctx.fillText('PHASE 2 · CORE SYSTEMS', cx, cy + 58);
+    ctx.fillText('PHASE 4 · CARGO & MERGE', cx, cy + 58);
 
     ctx.globalAlpha = pulse;
     ctx.fillStyle = p.accent;
@@ -599,7 +768,7 @@ export class Game {
     ctx.fillStyle = p.textDim;
     ctx.font = font(10, 500);
     ctx.fillText('the core is already decaying — watch the purple', cx, h * 0.62 + 22);
-    ctx.fillText('virtual stick · WASD on desktop · ` for debug', cx, h * 0.62 + 38);
+    ctx.fillText('virtual stick · WASD on desktop · I = cargo · ` for debug', cx, h * 0.62 + 38);
 
     ctx.restore();
   }
@@ -691,6 +860,7 @@ export class Game {
   destroy() {
     this.loop.stop();
     this.input.detach();
+    this.inventoryUI?.destroy();
   }
 }
 

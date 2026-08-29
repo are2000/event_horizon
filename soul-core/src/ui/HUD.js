@@ -235,70 +235,95 @@ export class HUD {
   _drawStatusLine(ctx, x, y, info = {}) {
     const p = CONFIG.palette;
     const ship = this.ship;
-
-    // Mass readout (weight is a stat, not one of the four bars).
     ctx.textAlign = 'left';
     ctx.font = font(9, 700);
-    ctx.fillStyle = p.textDim;
-    ctx.fillText('MASS', x, y);
 
+    /* --- the warning is decided FIRST, so the readouts can yield to it ----- */
+    let warning = null;
+    let warnColor = p.text;
+    if (ship.corrosionRatio >= CONFIG.systems.meltdownWarning) {
+      warning = ship.corrosionRatio >= 1 ? 'CORE MELTDOWN' : 'MELTDOWN IMMINENT';
+      warnColor = p.gaugeCorrosion;
+    } else if (ship.isOverheating) {
+      warning = 'CORE OVERHEAT';
+      warnColor = p.gaugeCritical;
+    } else if (ship.powerRatio < 0.15) {
+      warning = 'POWER CRITICAL';
+      warnColor = p.gaugePower;
+    } else if (ship.hullRatio < 0.25) {
+      warning = 'HULL BREACH';
+      warnColor = p.gaugeCritical;
+    } else if (ship.isOverloaded) {
+      warning = 'HOLD FULL - THRUST 0';
+      warnColor = p.gaugeCritical;
+    } else if (ship.weightRatio > 0.85) {
+      warning = 'OVERLOAD';
+      warnColor = p.gaugeHeat;
+    }
+
+    const rightLimit = x + this.panelWidth - 30; // value column ends here
+    const budget = rightLimit - (warning ? ctx.measureText(warning).width + 12 : 0);
+    const fits = (w) => cx + w <= budget;
+    let cx = x;
+
+    /* --- MASS (weight is a stat, not one of the four bars) ----------------- */
+    ctx.fillStyle = p.textDim;
+    ctx.fillText('MASS', cx, y);
     const massText = `${ship.stats.weight.toFixed(1)} / ${ship.stats.maxWeight}`;
     ctx.fillStyle = ship.isOverloaded ? p.gaugeCritical : p.weight;
-    ctx.fillText(massText, x + 34, y);
+    ctx.fillText(massText, cx + 34, y);
+    cx += 34 + ctx.measureText(massText).width + 10;
+
+    /* --- POWER LOAD: what the installed guns cost the reactor -------------- */
+    const load = ship.stats.powerLoad ?? 0;
+    const regen = ship.stats.powerRegen ?? CONFIG.systems.powerRegen;
+    if (load > 0.05 && fits(72)) {
+      const loadText = `${load.toFixed(1)}/s`;
+      ctx.fillStyle = p.textDim;
+      ctx.fillText('LOAD', cx, y);
+      ctx.fillStyle = load >= regen ? p.gaugeCritical : p.gaugePower;
+      ctx.fillText(loadText, cx + 30, y);
+      cx += 30 + ctx.measureText(loadText).width + 10;
+    }
 
     /* --- weapon mounts: one letter per hardpoint --------------------------- */
     const weapons = info.weapons;
-    if (weapons) {
-      let gx = x + 100;
+    if (weapons && fits(76)) {
       ctx.fillStyle = p.textDim;
-      ctx.fillText('GUNS', gx, y);
-      gx += 30;
+      ctx.fillText('GUNS', cx, y);
+      cx += 30;
       for (let i = 0; i < weapons.mounts.length; i++) {
         const m = weapons.mounts[i];
         const state = m.state;
         ctx.fillStyle =
           state === 'firing' ? p.gaugeHeat : state === 'tracking' ? p.accent : 'rgba(207,224,255,0.28)';
-        ctx.fillText(m.label, gx, y);
-        gx += 9;
+        ctx.fillText(m.label, cx, y);
+        cx += 9;
       }
-
-      // Kills + how many targets are still up.
-      ctx.fillStyle = p.textDim;
-      ctx.fillText('KILLS', gx + 6, y);
-      ctx.fillStyle = p.text;
-      ctx.fillText(String(info.kills ?? 0), gx + 34, y);
-      ctx.fillStyle = p.textDim;
-      ctx.fillText('TGT', gx + 52, y);
-      ctx.fillStyle = p.gaugeCorrosion;
-      ctx.fillText(String(info.targets ?? 0), gx + 70, y);
+      cx += 6;
     }
 
-    // Highest-priority warning on the right.
-    let warning = null;
-    let color = p.text;
-    if (ship.corrosionRatio >= CONFIG.systems.meltdownWarning) {
-      warning = ship.corrosionRatio >= 1 ? 'CORE MELTDOWN' : 'MELTDOWN IMMINENT';
-      color = p.gaugeCorrosion;
-    } else if (ship.isOverheating) {
-      warning = 'CORE OVERHEAT';
-      color = p.gaugeCritical;
-    } else if (ship.powerRatio < 0.15) {
-      warning = 'POWER CRITICAL';
-      color = p.gaugePower;
-    } else if (ship.hullRatio < 0.25) {
-      warning = 'HULL BREACH';
-      color = p.gaugeCritical;
-    } else if (ship.isOverloaded) {
-      warning = 'HOLD FULL — THRUST 0';
-      color = p.gaugeCritical;
-    } else if (ship.weightRatio > 0.85) {
-      warning = 'OVERLOAD';
-      color = p.gaugeHeat;
+    if (fits(62)) {
+      const kills = String(info.kills ?? 0);
+      ctx.fillStyle = p.textDim;
+      ctx.fillText('KILLS', cx, y);
+      ctx.fillStyle = p.text;
+      ctx.fillText(kills, cx + 34, y);
+      cx += 34 + ctx.measureText(kills).width + 10;
+    }
+
+    if (fits(46)) {
+      const targets = String(info.targets ?? 0);
+      ctx.fillStyle = p.textDim;
+      ctx.fillText('TGT', cx, y);
+      ctx.fillStyle = p.gaugeCorrosion;
+      ctx.fillText(targets, cx + 20, y);
+      cx += 20 + ctx.measureText(targets).width + 10;
     }
 
     if (warning) {
       ctx.textAlign = 'right';
-      ctx.fillStyle = color;
+      ctx.fillStyle = warnColor;
       ctx.globalAlpha = 0.7 + 0.3 * Math.abs(Math.sin(ship.age * 5));
       ctx.fillText(`▲ ${warning}`, x + this.panelWidth - 20, y);
       ctx.globalAlpha = 1;
@@ -418,6 +443,9 @@ export class HUD {
       systems ? systems.explain('thrustMul') : '',
       systems ? systems.explain('maxSpeedMul') : '',
       ...gunLines,
+      info.cargo ? `hold ${info.cargo.items.length} items  ${info.cargo.totalWeight}kg  load ${info.cargo.powerLoad}/s  ` +
+        Object.keys(info.cargo.equipped).map((id) => `${id}:${info.cargo.equipped[id]?.name.replace(' ', '') ?? '-'}`).join(' ') : '',
+      info.projectiles !== undefined ? `shells ${info.projectiles.liveCount} live  pickups ${info.pickups ?? 0}` : '',
       `cam ${info.camera.x.toFixed(0)},${info.camera.y.toFixed(0)} z${info.camera.zoom.toFixed(3)}`,
       info.input ? info.input.joystick.debugString() : '',
       `view ${vp.width}x${vp.height} @${vp.dpr.toFixed(2)}  safe-b ${safe.bottom}`,

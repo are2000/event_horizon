@@ -129,9 +129,15 @@ export const CONFIG = {
 
     /* --- POWER (capacitor) ----------------------------------------------- */
     maxPower: 100,
-    powerRegen: 13, // units/s recharged
+    // Raised from 13 when the cargo hold landed: three installed guns plus the
+    // drive were out-drawing the reactor at rest, which made the *starting*
+    // loadout feel broken rather than merely heavy.
+    powerRegen: 16, // units/s recharged
     overheatRegenPenalty: 0.5, // recharge multiplier while overheating
-    drivePowerDraw: 20, // units/s at full throttle (placeholder consumer)
+    // Retuned in phase 4 (was 20 against 13/s of recharge) to keep the tuned
+    // "hold the stick down and the ship eventually sags" feel once the
+    // reactor's output was raised: ~14s of burn to empty, then ~0.78 thrust.
+    drivePowerDraw: 23, // units/s at full throttle (placeholder consumer)
     brownoutThrust: 0.25, // thrust multiplier with a completely empty capacitor
 
     /* --- HEAT ------------------------------------------------------------- */
@@ -209,6 +215,63 @@ export const CONFIG = {
       color: '#7cf9ff',
       coreColor: '#ffffff',
     },
+
+    /* --- cannon (burst-fire projectiles) ------------------------------------ */
+    cannon: {
+      name: 'Cannon',
+      range: 470, // wu
+      damage: 30, // per shell
+      shotsPerSecond: 2.0,
+      powerPerShot: 9, // capacitor units, per shell
+      heatPerShot: 10,
+      speed: 900, // wu/s muzzle velocity
+      spread: 0.045, // radians of inaccuracy
+      projectileRadius: 7,
+      projectileLife: 1.4, // seconds
+      fireTolerance: 0.12, // rad — chunkier gun, sloppier aim allowed
+      color: '#ffd166',
+      coreColor: '#fff3c4',
+      minDuty: 0.5, // a shell that isn't at least half powered doesn't fire
+    },
+
+    /* --- projectiles --------------------------------------------------------- */
+    projectiles: {
+      capacity: 220,
+    },
+  },
+
+  /* ------------------------------------------------------------ inventory -- */
+  // The cargo hold: a grid of cells, a merge ladder, and three hardpoint slots.
+  inventory: {
+    cols: 5,
+    rows: 6,
+
+    /**
+     * Standby draw of an INSTALLED weapon, as a fraction of its firing draw.
+     * Bolt three guns on and the reactor has less left over for the capacitor:
+     *   3 x Laser T1 (7/s each) => 21 * 0.2 = 4.2/s of lost recharge.
+     * Small enough that the starting loadout still flies, big enough that a
+     * hold full of T4 guns (100/s of draw) genuinely strands you.
+     */
+    idleLoadFactor: 0.2,
+
+    /** What the hauler leaves drydock with (two same-tier guns = a free merge). */
+    startLoadout: [
+      { defId: 'laser', mount: 'left' },
+      { defId: 'laser', mount: 'right' },
+      { defId: 'cannon', mount: 'rear' },
+      { defId: 'laser' },
+      { defId: 'cannon' },
+      { defId: 'capacitor' },
+      { defId: 'radiator' },
+      { defId: 'plating' },
+    ],
+
+    /* --- salvage drops ------------------------------------------------------- */
+    dropChance: 0.55, // chance a destroyed dummy leaves something behind
+    maxPickups: 14, // world cap (keeps the sector readable)
+    pickupRadius: 46, // wu — collection range from the ship's centre
+    pickupLifetime: 75, // seconds before salvage decays into the void
   },
 
   /* --------------------------------------------------------------- debug -- */

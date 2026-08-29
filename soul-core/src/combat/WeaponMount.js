@@ -129,8 +129,10 @@ export class WeaponMount {
     this.muzzleY = ship.y + this.offsetX * sin + this.offsetY * cos;
 
     /* 2. TARGETING ---------------------------------------------------------- */
-    const targeting = ctx.targeting;
-    const range = this.weapon ? this.weapon.range : targeting.defaultRange;
+    // An empty hardpoint has nothing to shoot with, so it neither scans nor
+    // claims a target — it just parks at the centre of its arc.
+    const targeting = this.weapon ? ctx.targeting : null;
+    const range = this.weapon ? this.weapon.range : (ctx.targeting ? ctx.targeting.defaultRange : 500);
     const arcCenterWorld = ship.angle + this.arcCenter;
 
     if (targeting) {
@@ -189,6 +191,9 @@ export class WeaponMount {
         mount: this,
         target: this.target,
         particles: ctx.particles,
+        // Projectile weapons spawn into the shared pool; it must be forwarded
+        // every step or a cannon pays for shells that never exist.
+        projectiles: ctx.projectiles,
         events: ctx.events,
         time: ctx.time,
       });
@@ -244,26 +249,72 @@ export class WeaponMount {
     ctx.fill();
     ctx.stroke();
 
-    // Barrel
+    /* --- EMPTY HARDPOINT ---------------------------------------------------- */
+    // Nothing bolted on: draw a socket so the player can see where a gun goes
+    // (and notices when a slot is empty while fiddling with the inventory).
+    if (!this.weapon) {
+      ctx.save();
+      ctx.rotate(aim);
+      ctx.strokeStyle = 'rgba(127, 157, 203, 0.55)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(5, 0);
+      ctx.lineTo(11, 0);
+      ctx.stroke();
+      ctx.restore();
+      ctx.restore();
+      return;
+    }
+
+    // Barrel — shape and colour come from the weapon, so swapping gear changes
+    // the ship's silhouette on the canvas.
+    const barrel = this.weapon.barrel ?? { length: 17, width: 4, color, brake: false };
+    const bw = barrel.width;
+    const bh = bw * 0.5;
+
     ctx.save();
     ctx.rotate(aim);
-    ctx.fillStyle = color;
-    ctx.fillRect(0, -2, 17, 4);
-    ctx.fillStyle = p.hullDark;
-    ctx.fillRect(12, -3, 4, 6);
+    ctx.fillStyle = state === 'firing' ? p.gaugeHeat : barrel.color ?? color;
+    ctx.fillRect(0, -bh, barrel.length, bw);
+    if (barrel.brake) {
+      // Chunky muzzle brake — reads as a cannon at a glance.
+      ctx.fillStyle = p.hullDark;
+      ctx.fillRect(barrel.length - 5, -bh - 1.5, 5, bw + 3);
+    } else {
+      ctx.fillStyle = p.hullDark;
+      ctx.fillRect(barrel.length - 5, -bh - 1, 4, bw + 2);
+    }
 
     // Muzzle glow while firing
     if (state === 'firing') {
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = 0.8;
-      ctx.fillStyle = CONFIG.combat.laser.coreColor;
+      ctx.fillStyle = this.weapon.color ?? CONFIG.combat.laser.coreColor;
       ctx.beginPath();
-      ctx.arc(17, 0, 4 + Math.random() * 2, 0, Math.PI * 2);
+      ctx.arc(barrel.length, 0, 3 + Math.random() * 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
 
     ctx.restore();
+  }
+
+  /**
+   * Swap what is bolted to this hardpoint (inventory equip / unequip).
+   * @param {import('./Weapon.js').Weapon|null} weapon
+   */
+  setWeapon(weapon) {
+    if (this.weapon === weapon) return this;
+    this.weapon = weapon ?? null;
+    if (this.weapon) this.weapon.attach(this);
+    // Point the new gun at the middle of its arc and drop any stale lock.
+    this.target = null;
+    this.hasTarget = false;
+    this.retargetTimer = 0;
+    return this;
   }
 
   reset() {
