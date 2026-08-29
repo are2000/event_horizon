@@ -23,6 +23,17 @@ python3 -m http.server 8000        # then open http://localhost:8000
 **On a phone:** serve on `0.0.0.0` and open your machine's LAN IP, or use a
 tunnel (`ngrok http 8000`). Add `?debug=1` for the telemetry overlay.
 
+### Install it on the phone (like an app)
+
+`index.html` ships a `manifest.webmanifest` + icons, so **Add to Home Screen**
+works and gives a full-screen, chromeless launch — no URL bar to swipe by
+accident mid-run. Portrait is locked in the manifest; the icons are placeholder
+art.
+
+> Note: the **GitHub mobile app cannot run the game** — it renders files, it
+> does not execute them. You need a served URL (a host, a tunnel, GitHub Pages
+> or this sandbox's preview link).
+
 ### URL parameters
 
 | Param        | Example       | Effect                                                   |
