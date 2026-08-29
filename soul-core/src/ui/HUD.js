@@ -482,7 +482,7 @@ export class HUD {
       `cam ${info.camera.x.toFixed(0)},${info.camera.y.toFixed(0)} z${info.camera.zoom.toFixed(3)}`,
       info.input ? info.input.joystick.debugString() : '',
       `view ${vp.width}x${vp.height} @${vp.dpr.toFixed(2)}  safe-b ${safe.bottom}`,
-      '[`] debug  [P] pause  [R] restart  [J] jettison  [2] +mass  [6] raider  [7] scrap',
+      '[`] debug  [P] pause  [R] restart  [J] jettison  [6] raider  [7] scrap  [8] guns',
     ];
 
     ctx.save();

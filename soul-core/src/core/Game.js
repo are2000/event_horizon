@@ -43,7 +43,7 @@ import { Inventory } from '../inventory/Inventory.js';
 import { InventoryUI } from '../inventory/InventoryUI.js';
 import { Item } from '../inventory/Item.js';
 import { ItemPickup } from '../entities/ItemPickup.js';
-import { DROP_TABLE } from '../inventory/ItemDefs.js';
+import { DROP_TABLE, getDef } from '../inventory/ItemDefs.js';
 import { HUD } from '../ui/HUD.js';
 import { VirtualJoystick } from '../ui/VirtualJoystick.js';
 import { World } from '../world/World.js';
@@ -603,6 +603,30 @@ export class Game {
     return dropped;
   }
 
+  /**
+   * Debug helper (Digit8): ring the ship with one salvage crate per gun so
+   * every weapon can be felt without waiting for the drop table to roll it.
+   *
+   * @param {number} [tier] starting tier (1..maxTier of each def)
+   * @returns {ItemPickup[]} the crates that were actually placed
+   */
+  _debugGrantGear(tier = 1) {
+    const defIds = Object.keys(DROP_TABLE).filter((id) => getDef(id)?.kind === 'weapon');
+    const ring = [];
+    for (let i = 0; i < defIds.length; i++) {
+      if (this.pickups.length >= CONFIG.inventory.maxPickups) break;
+      const a = (i / defIds.length) * TAU;
+      const pickup = new ItemPickup({
+        x: clamp(this.ship.x + Math.cos(a) * 110, 40, this.world.width - 40),
+        y: clamp(this.ship.y + Math.sin(a) * 110, 40, this.world.height - 40),
+        item: new Item({ defId: defIds[i], tier }),
+      });
+      this.pickups.push(pickup);
+      ring.push(pickup);
+    }
+    return ring;
+  }
+
   /** Debug helper (Digit6): drop a live raider `dist` wu from the ship. */
   _debugSpawnRaider(dist = 260) {
     const a = Math.random() * TAU;
@@ -678,6 +702,9 @@ export class Game {
         for (const shard of Scrap.scatter({ x: this.ship.x + 90, y: this.ship.y, amount: 10 })) {
           this.scrap.push(shard);
         }
+        break;
+      case 'Digit8': // one crate of every gun, T2, in a ring around the ship
+        this._debugGrantGear(2);
         break;
       case 'Digit0': // full service
         s.heat = 0;

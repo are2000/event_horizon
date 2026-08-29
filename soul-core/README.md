@@ -611,6 +611,7 @@ peripheral vision while you are busy shooting.
 | --- | --- |
 | `6` (debug) | spawn a raider 260 wu off the nose |
 | `7` (debug) | drop 10 scrap next to the ship |
+| `8` (debug) | ring the ship with one T2 crate per gun (laser / cannon / kinetic / plasma) |
 
 ---
 
