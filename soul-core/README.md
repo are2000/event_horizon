@@ -49,12 +49,17 @@ art.
 ### Permanent link (GitHub Pages)
 
 Pages for this repo already serves the `gh-pages` branch, which hosts a
-different project at the site root — so the game is published **as a subfolder**
-by `.github/workflows/deploy-soul-core.yml` on every push to this branch:
+**different project at the site root**. To publish the game without taking that
+site down, add a workflow on this branch that copies `soul-core/` into the
+Pages branch under `soul-core/`, giving:
 
 ```
 https://<user>.github.io/event_horizon/soul-core/
 ```
+
+(Pointing Pages at this branch instead works too — **Settings → Pages →
+Deploy from a branch → `arena/01a04a7e-event-horizon` / `/ (root)`** — but that
+replaces whatever `gh-pages` is currently serving.)
 
 ### URL parameters
 
